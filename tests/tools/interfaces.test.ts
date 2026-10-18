@@ -122,6 +122,22 @@ describe('list_interfaces', () => {
     expect(out.interfaces.map((i: any) => i.id)).toEqual(['Bridge0']);
   });
 
+  // Captured from a KN-1810: ports are keyed by label, the switch name is in id.
+  it('puts LAN ports under lan and the WAN port under wan', async () => {
+    const withPorts = async () => ({
+      ...(INTERFACES as Record<string, unknown>),
+      '0': { id: 'GigabitEthernet1/0', type: 'Port', link: 'up' },
+      '1': { id: 'GigabitEthernet0/0', type: 'Port', link: 'down' }
+    });
+    const lan = payload(await harness(withPorts).handlers['list_interfaces']!({ kind: 'lan' }));
+    const wan = payload(await harness(withPorts).handlers['list_interfaces']!({ kind: 'wan' }));
+    const ids = (out: any): string[] => out.interfaces.map((i: any) => i.id);
+    expect(ids(lan)).toContain('1');
+    expect(ids(lan)).not.toContain('0');
+    expect(ids(wan)).toContain('0');
+    expect(ids(wan)).not.toContain('1');
+  });
+
   it('reports totals', async () => {
     const out = payload(await harness().handlers['list_interfaces']!({}));
     expect(out.total).toBe(4);

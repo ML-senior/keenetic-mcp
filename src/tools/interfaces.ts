@@ -53,6 +53,7 @@ function matchesKind(id: string, record: Record<string, unknown>, kind: Interfac
   const type = typeof record['type'] === 'string' ? record['type'] : '';
   switch (kind) {
     case 'wan':
+      if (type === 'Port') return !String(record['id'] ?? '').startsWith('GigabitEthernet0/');
       return record['role'] === 'inet' || record['defaultgw'] === true;
     case 'wifi':
       return id.includes('WifiMaster') || type === 'AccessPoint';
@@ -61,6 +62,8 @@ function matchesKind(id: string, record: Record<string, unknown>, kind: Interfac
     case 'bridge':
       return type === 'Bridge';
     case 'lan':
+      // Physical LAN ports are type Port with an id on the LAN switch.
+      if (type === 'Port') return String(record['id'] ?? '').startsWith('GigabitEthernet0/');
       return type === 'Bridge' || type.includes('Ethernet');
     default:
       return true;
