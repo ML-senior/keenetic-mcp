@@ -85,15 +85,18 @@ describe('no version is written down in the sources', () => {
   });
 
   /**
-   * The one version-shaped string left in the repository, and the exception is
-   * deliberate: it guards against a major upgrade arriving unannounced on
-   * people who installed the plugin. Tracking only the major means it changes
-   * once, at 1.0, rather than at every release.
+   * This fork is not published to npm, so the plugin runs the locally built
+   * server. The assertion that matters here is that the launcher carries no
+   * version-shaped string at all.
    */
-  it('the plugins pin the major and nothing narrower', async () => {
+  it('the plugins launch the local build and pin nothing', async () => {
     const mcp = await json<{ mcpServers: Record<string, { args: string[] }> }>(
       'plugins/keenetic/.mcp.json'
     );
-    expect(mcp.mcpServers['keenetic']?.args.at(-1)).toBe('keenetic-mcp@^0');
+    const args = mcp.mcpServers['keenetic']?.args ?? [];
+    expect(args.at(-1)).toContain('dist/index.js');
+    for (const arg of args) {
+      expect(arg, `argument "${arg}" must not look like a version pin`).not.toMatch(/@\^?\d/);
+    }
   });
 });

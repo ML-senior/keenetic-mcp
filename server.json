@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.salatmaster/keenetic-mcp",
+  "name": "io.github.ML-senior/keenetic-mcp",
   "description": "Control a Keenetic router: devices, Wi-Fi, VPN routing, segments, safe verified writes.",
   "repository": {
-    "url": "https://github.com/salatmaster/keenetic-mcp",
+    "url": "https://github.com/ML-senior/keenetic-mcp",
     "source": "github"
   },
   "version": "0.0.0-dev",

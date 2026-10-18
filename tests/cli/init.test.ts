@@ -56,7 +56,7 @@ describe('runInit', () => {
     const text = out.join('\n');
     expect(text).toMatch(/Claude Code/);
     expect(text).toMatch(/Codex/);
-    expect(text).toMatch(/plugin marketplace add salatmaster\/keenetic-mcp/);
+    expect(text).toMatch(/plugin marketplace add ML-senior\/keenetic-mcp/);
     expect(text).toMatch(/"command": "npx"/);
     expect(text).toMatch(/"keenetic-mcp"/);
   });

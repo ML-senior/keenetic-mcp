@@ -71,10 +71,10 @@ export async function runInit(deps: InitDeps): Promise<number> {
   deps.out('');
   deps.out('Add it to your agent. The plugin brings the skills along with the server:');
   deps.out('');
-  deps.out('  Claude Code   /plugin marketplace add salatmaster/keenetic-mcp');
+  deps.out('  Claude Code   /plugin marketplace add ML-senior/keenetic-mcp');
   deps.out('                /plugin install keenetic@keenetic');
   deps.out('');
-  deps.out('  Codex         codex plugin marketplace add salatmaster/keenetic-mcp');
+  deps.out('  Codex         codex plugin marketplace add ML-senior/keenetic-mcp');
   deps.out('                codex plugin add keenetic@keenetic');
   deps.out('');
   deps.out('  Anything else {"command": "npx", "args": ["-y", "keenetic-mcp"]}');

@@ -14,8 +14,10 @@ It reads the password from the terminal without echoing it, which only works
 when the user runs it. Tell them to run this in their own terminal:
 
 ```
-npx -y keenetic-mcp init
+node dist/index.js init
 ```
+
+(from the repository root, after `npm install && npm run build`).
 
 Explain what will happen, so nothing is a surprise:
 

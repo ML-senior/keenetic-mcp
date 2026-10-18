@@ -38,13 +38,15 @@ describe('plugin manifests', () => {
   // Verified against a plugin OpenAI ships: Codex reads the same camelCase
   // `mcpServers` wrapper Claude Code does, despite its documentation showing a
   // bare server map. That is what lets one .mcp.json serve both.
+  // This fork is not published to npm, so the plugin runs the locally built
+  // server instead of an npx package (which would resolve to upstream).
   it('share one .mcp.json that both readers understand', async () => {
     const mcp = await json<McpConfig>('plugins/keenetic/.mcp.json');
     const server = mcp.mcpServers['keenetic'];
 
     expect(server, 'the server must be keyed under mcpServers').toBeDefined();
-    expect(server?.command).toBe('npx');
-    expect(server?.args).toContain('-y');
+    expect(server?.command).toBe('node');
+    expect(server?.args.join(' ')).toContain('dist/index.js');
   });
 
   it('point the Codex manifest at the shared skills and server', async () => {

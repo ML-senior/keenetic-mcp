@@ -2,10 +2,10 @@
   "name": "keenetic",
   "description": "Control your Keenetic router from Claude: who is on the network, Wi-Fi, interfaces, routing policies, and safe configuration changes",
   "author": {
-    "name": "salatmaster"
+    "name": "ML-senior"
   },
-  "homepage": "https://github.com/salatmaster/keenetic-mcp",
-  "repository": "https://github.com/salatmaster/keenetic-mcp",
+  "homepage": "https://github.com/ML-senior/keenetic-mcp",
+  "repository": "https://github.com/ML-senior/keenetic-mcp",
   "license": "MIT",
   "keywords": [
     "keenetic",
