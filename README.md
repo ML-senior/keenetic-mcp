@@ -1,16 +1,51 @@
-![keenetic-mcp, the Keenetic MCP server: secure automation and control for Keenetic routers via the Model Context Protocol. Your AI client talks to the MCP server, which talks to the router. Works natively with Claude and Codex, and with Cursor over MCP. Secure and private, all operations run locally in your network. No installation, nothing installed on your Keenetic. Manage settings, users, Wi-Fi and firewall. You decide what to automate and when.](https://raw.githubusercontent.com/salatmaster/keenetic-mcp/main/docs/banner.png)
+![keenetic-mcp, the Keenetic MCP server: secure automation and control for Keenetic routers via the Model Context Protocol. Your AI client talks to the MCP server, which talks to the router. Works natively with Claude and Codex, and with Cursor over MCP. Secure and private, all operations run locally in your network. No installation, nothing installed on your Keenetic. Manage devices, Wi-Fi, port forwarding, KeenDNS, DNS, DHCP, firewall and Entware. You decide what to automate and when.](https://raw.githubusercontent.com/ML-senior/keenetic-mcp/main/docs/banner.png)
 
 # keenetic-mcp
 
-**Control your Keenetic router from Claude, Codex, Cursor, or any MCP agent.**
+**Your Keenetic router, fully controllable by an AI agent — devices, Wi-Fi, port forwarding, KeenDNS, DNS, DHCP, firewall, mesh, storage, logs, and Entware over SSH.**
 
-[![npm](https://img.shields.io/npm/v/keenetic-mcp)](https://www.npmjs.com/package/keenetic-mcp)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-black)](https://modelcontextprotocol.io)
 [![KeeneticOS](https://img.shields.io/badge/KeeneticOS-5.1%20tested-green)](#supported-routers)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](#requirements)
+[![tools](https://img.shields.io/badge/MCP%20tools-42-orange)](#full-tool-reference)
 
-Ask your agent about your network in plain language. No USB stick, no Entware,
-nothing installed on the router.
+> **Fork of [salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** — extended from 18 to 42 tools: full network-service management (port forwarding, KeenDNS, DNS, static DHCP, firewall), mesh and storage monitoring, log and ping diagnostics, and **opt-in SSH access** for Entware packages and their configs. Same safety model, same zero-install philosophy.
+
+---
+
+## 🧭 What's inside
+
+| 🚀 Start | ⚡ [Quick Start](#-quick-start) | 📦 [Install](#-install) | 🔧 [Configuration](#%EF%B8%8F-configuration) |
+|---|---|---|---|
+| 💡 **Learn** | 💥 [Why this server](#-why) | 🛡️ [Safety model](#%EF%B8%8F-the-safety-model) | 🔬 [How it works](#-how-it-works) |
+| 🧰 **Features** | 📖 [Full tool reference](#-full-tool-reference) | 🐚 [SSH & Entware](#-ssh--entware-opt-in) | 🧩 [Skills included](#-skills-included) |
+| 👀 **See it** | 💬 [In action](#-in-action) | 📡 [Supported routers](#-supported-routers) | 🗺️ [Roadmap](#%EF%B8%8F-roadmap) |
+| 📦 **Project** | 🛠️ [Development](#-development) | 🙏 [Acknowledgments](#-acknowledgments) | 📄 [License](#-license) |
+
+---
+
+## 💥 Why
+
+- **Nothing on the router.** It talks to the router's own HTTP API (RCI) over your
+  LAN. No USB drive, no Entware, no firmware modification — until you *opt in*
+  to SSH for Entware work.
+- **Works on any Keenetic.** The tool set adapts to what your specific model and
+  firmware actually support.
+- **Safe by construction.** Changes are never saved unless you ask, a backup is
+  taken before the first one, and every change is read back and verified before
+  it is reported as done.
+- **Read-only if you want it.** One flag and the agent physically cannot change
+  anything — the write tools are never even registered.
+- **Shell access is opt-in, never default.** `--ssh` unlocks Entware package
+  management and file editing with a blocklist for flash writes, `rm -rf` of
+  system paths and lockout commands.
+- **LAN only.** No cloud, no telemetry, no outbound connection to anything but
+  your router.
+
+---
+
+## 💬 In action
 
 ```
 > who is using the most bandwidth right now?
@@ -21,86 +56,131 @@ nothing installed on the router.
   living-room-tv   wired:Home                3.2 GB down
   hallway-camera   wifi:HomeNet   -48 dBm    5.4 MB down
 
-  The laptop is on the 2.4 GHz radio at -46 dBm, which is a strong
-  signal, so the throughput is not a coverage problem.
+> forward port 8123 to the home server
 
-> block the camera until tomorrow morning
-
-  Blocked hallway-camera (02:00:00:00:00:14).
+  Forwarded tcp/8123 on GigabitEthernet1 -> 02:00:00:00:00:10 (home-server).
 
   Applied to the running configuration and verified, but NOT saved.
   A reboot discards it. Backup taken before the change:
   ~/Library/Application Support/keenetic-mcp/backups/…txt
 
-  Say the word and I will make it permanent, or leave it and it
-  reverts on the next restart.
+> install mc on the router and enable it in cron   (with --ssh)
+
+  $ opkg install mc
+  Package mc (4.8.30-1) installed. 41 KB free on /opt.
+
+  Wrote /opt/etc/crontab (backup at /opt/etc/crontab.bak-2026-10-18T…),
+  md5 verified.
 ```
 
-## Why
+---
 
-- **Nothing on the router.** It talks to the router's own HTTP API over your
-  LAN. No USB drive, no Entware, no firmware modification.
-- **Works on any Keenetic.** The tool set adapts to what your specific model and
-  firmware actually support.
-- **Safe by construction.** Changes are never saved unless you ask, a backup is
-  taken before the first one, and every change is read back and verified before
-  it is reported as done.
-- **Read-only if you want it.** One flag and the agent physically cannot change
-  anything.
+## ⚡ Quick Start
 
-## Install
+### Requirements
 
-### Claude Code
+- **Node.js ≥ 20** on the machine that will run the server (your PC, a NAS, a
+  Raspberry Pi — anything on the same LAN as the router)
+- A Keenetic router on **KeeneticOS 5.x** (4.x works too, the tool set adapts)
+- Any MCP client: Claude Code, Codex, Cursor, Claude Desktop…
 
-```
-/plugin marketplace add salatmaster/keenetic-mcp
-/plugin install keenetic@keenetic
-```
+### 📦 Install
 
-Then run the setup wizard in your terminal:
-
-```
-npx -y keenetic-mcp init
+```bash
+git clone https://github.com/ML-senior/keenetic-mcp.git
+cd keenetic-mcp
+npm install
+npm run build
 ```
 
-### Codex
+Then run the setup wizard — it finds your router from the default gateway,
+confirms it really is a Keenetic, checks the password, and stores the password
+in your **operating system keychain** (only the address and login go in a
+settings file):
 
-```
-codex plugin marketplace add salatmaster/keenetic-mcp
-codex plugin add keenetic@keenetic
-npx -y keenetic-mcp init
-```
-
-This brings the skills along with the server. For the server on its own:
-
-```
-codex mcp add keenetic -- npx -y keenetic-mcp
+```bash
+node dist/index.js init
 ```
 
-### Anything else
+### Connect your MCP client
+
+**Claude Code**
+
+```bash
+claude mcp add keenetic -- node /path/to/keenetic-mcp/dist/index.js
+```
+
+**Cursor / Claude Desktop / anything else** — add to the MCP config:
 
 ```json
 {
   "mcpServers": {
-    "keenetic": { "command": "npx", "args": ["-y", "keenetic-mcp"] }
+    "keenetic": {
+      "command": "node",
+      "args": ["/path/to/keenetic-mcp/dist/index.js"]
+    }
   }
 }
 ```
 
-The wizard finds your router from the default gateway, confirms it really is a
-Keenetic, checks the password against it, and stores the password in your
-operating system keychain. Only the address and login go in a settings file.
+**With SSH/Entware access** (see [SSH & Entware](#-ssh--entware-opt-in)):
 
-Prefer environment variables? `KEENETIC_HOST`, `KEENETIC_USER` and
-`KEENETIC_PASSWORD` override everything, which is what you want in a container.
+```json
+{
+  "mcpServers": {
+    "keenetic": {
+      "command": "node",
+      "args": ["/path/to/keenetic-mcp/dist/index.js", "--ssh"]
+    }
+  }
+}
+```
 
-## What it can do
+### Verify it's working
 
-**Read**
+Ask your agent:
 
-| Tool | |
+```
+> what router do I have, and is the internet up?
+```
+
+You should see your model, firmware and the reachability checks. 🎉
+
+---
+
+## ⚙️ Configuration
+
+Configuration resolves in this order: **environment variable → CLI flag →
+stored config** (written by `init`).
+
+| Variable | Flag | Default | Purpose |
+|---|---|---|---|
+| `KEENETIC_HOST` | `--host` | *(wizard finds it)* | Router address |
+| `KEENETIC_USER` | — | `admin` | Router login |
+| `KEENETIC_PASSWORD` | — | *(keychain)* | Router password |
+| — | `--read-only` | off | Never register the write tools |
+| — | `--max-response-bytes` | `25000` | Cap on any tool response |
+| `KEENETIC_SSH` | `--ssh` | **off** | Enable the SSH/Entware tools |
+| `KEENETIC_SSH_PORT` | `--ssh-port` | `22` | SSH port (`222` for Entware dropbear) |
+| `KEENETIC_SSH_USER` | — | router login | SSH user (`root` for dropbear) |
+| `KEENETIC_SSH_PASSWORD` | — | router password | SSH password |
+| `KEENETIC_STATE_DIR` | — | per-OS state dir | Where backups live |
+
+Environment variables are what you want in a container. The wizard reads
+passwords from the terminal; nothing ever lands in a log or a tool response.
+
+---
+
+## 📖 Full tool reference
+
+**42 tools.** Read tools are always available; write tools hide in
+`--read-only` mode; SSH tools hide unless `--ssh` is passed.
+
+### 👀 Read
+
+| Tool | What it returns |
 |---|---|
-| `list_devices` | every device, filtered by active, wired, wireless or blocked, sorted by traffic or signal |
+| `list_devices` | every device, filtered by active/wired/wireless/blocked, sorted by traffic, name, signal or last seen |
 | `get_device` | one device in full: lease, Wi-Fi rate, policy, schedule, traffic |
 | `list_interfaces` | WAN links, bridges, access points, VPN tunnels |
 | `get_interface` | one interface in full, including WireGuard peers |
@@ -124,46 +204,96 @@ Prefer environment variables? `KEENETIC_HOST`, `KEENETIC_USER` and
 | `get_ping_check` | router-side reachability probes for its internet links |
 | `run_ping` | pings a host from the machine running this server |
 
-**Change**
+### ✏️ Change
 
-| Tool | |
+| Tool | What it does |
 |---|---|
 | `update_device` | rename, block or allow, assign a routing policy, schedule or priority |
 | `set_interface_state` | bring an interface up or down |
 | `create_segment` | a guest or IoT network the web interface actually lists, with Wi-Fi, DHCP and optional VPN routing |
 | `delete_segment` | remove a segment and everything created with it |
-| `set_port_forwarding` / `remove_port_forwarding` | forward an external port to a device, addressed by MAC |
-| `set_keendns_mapping` / `remove_keendns_mapping` | publish or withdraw a KeenDNS web-app mapping |
-| `set_dns_host` / `remove_dns_host` | static DNS records served by the router |
-| `set_dhcp_host` / `remove_dhcp_host` | fixed MAC-to-IP reservations |
-| `reboot_router` | reboot, only with confirm=true; reports whether unsaved changes were lost |
+| `set_port_forwarding` / `remove_port_forwarding` | forward an external TCP/UDP port to a device, addressed by MAC (an IP of a known device is resolved; an unknown IP is refused) |
+| `set_keendns_mapping` / `remove_keendns_mapping` | publish or withdraw a KeenDNS web-app mapping, with HTTPS redirect and public/private access |
+| `set_dns_host` / `remove_dns_host` | static DNS records served by the router; refuses to round-robin an existing name |
+| `set_dhcp_host` / `remove_dhcp_host` | fixed MAC-to-IP reservations; refuses an IP already reserved for another MAC |
+| `reboot_router` | reboot, only with `confirm=true`; reports whether unsaved changes were lost |
 | `save_config` | make pending changes survive a reboot |
 
-**Escape hatch**
+### 🐚 Shell (opt-in, `--ssh`)
 
-| Tool | |
+| Tool | What it does |
+|---|---|
+| `ssh_exec` | run a shell command, get stdout, stderr and the exit code |
+| `ssh_read_file` | read a file, e.g. an Entware config under `/opt/etc` |
+| `ssh_write_file` | write under `/opt/` or `/tmp/` only; backs up the old file and verifies the md5 afterwards |
+| `opkg_manage` | `update` / `install` / `remove` / `list` / `list-installed` / `info` for Entware packages |
+
+### 🪤 Escape hatch
+
+| Tool | What it does |
 |---|---|
 | `rci_call` | any router API path at all, for whatever the tools above do not cover |
 
-**Shell access (opt-in)**
+---
 
-Disabled unless the server is started with `--ssh` (or `KEENETIC_SSH=1`), and
-never registered in read-only mode. SSH defaults to the router host, port 22
-and the router credentials; override with `KEENETIC_SSH_PORT`,
-`KEENETIC_SSH_USER`, `KEENETIC_SSH_PASSWORD` (for Entware's dropbear on port
-222 with its own root password, for example).
+## 🛡️ The safety model
 
-| Tool | |
-|---|---|
-| `ssh_exec` | run a shell command, get stdout, stderr and the exit code |
-| `ssh_read_file` | read a file, e.g. an Entware config under /opt/etc |
-| `ssh_write_file` | write under /opt/ or /tmp/ only; backs up the old file and verifies the md5 afterwards |
-| `opkg_manage` | install, remove, list and update Entware packages |
+- **Nothing is saved unless you ask.** Changes apply to the running
+  configuration and are discarded on reboot until `save_config` is called. The
+  server never calls it on its own.
+- **A backup is taken automatically** before the first change of a session.
+  The path is in every write response.
+- **Every change is verified.** The router accepts some wrong commands silently
+  and changes nothing, so each write is read back and compared before it is
+  reported as successful.
+- **Read-only mode really is read-only.** With `--read-only`, the write tools
+  are not registered at all rather than registered and refusing, so the agent
+  never sees them.
+- **SSH is a deliberate second key.** It is off by default, never appears in
+  read-only mode, refuses flash writes / `rm -rf` of system paths /
+  `reboot` / `passwd` outright, and `ssh_write_file` is confined to `/opt/` and
+  `/tmp/` with a `.bak` copy and an md5 round-trip on every write.
+- **Your password goes in the system keychain**, not in a config file, and
+  never in a log or a tool response.
+- **LAN only.** No cloud, no telemetry, no outbound connection to anything but
+  your router.
 
-Flash writes, `rm -rf` of system paths, `reboot`/`passwd` from the shell are
-refused outright.
+---
 
-## Skills included
+## 🐚 SSH & Entware (opt-in)
+
+The RCI API covers the router's own configuration. For everything that lives
+*inside* the router's Linux — Entware packages, their configs, service logs —
+enable shell access:
+
+```bash
+node dist/index.js --ssh
+# or: KEENETIC_SSH=1 node dist/index.js
+```
+
+By default it connects to the router host on **port 22 with the web-interface
+credentials** (the KeeneticOS SSH server component — enable it in the router's
+web UI under *Management → SSH*). For Entware's own dropbear instead:
+
+```bash
+KEENETIC_SSH=1 KEENETIC_SSH_PORT=222 KEENETIC_SSH_USER=root \
+KEENETIC_SSH_PASSWORD=… node dist/index.js
+```
+
+Typical flow an agent can now drive end-to-end:
+
+```
+1. get_media / get_opkg_status        → is the Entware drive healthy?
+2. opkg_manage { action: "update" }   → refresh package lists
+3. opkg_manage { action: "install", package: "adguardhome" }
+4. ssh_read_file / ssh_write_file     → edit /opt/etc/… (auto .bak + md5 check)
+5. ssh_exec "/opt/etc/init.d/S99x restart" → apply
+6. ssh_exec "logread" / get_log       → verify from the logs
+```
+
+---
+
+## 🧩 Skills included
 
 The plugin ships four skills, so the agent knows how your router behaves rather
 than guessing. One plugin directory serves both Claude Code and Codex: they read
@@ -173,8 +303,8 @@ different manifests but share the same skills and the same server definition.
   return 100 KB, and how to recover the exact syntax of a command from the
   router's own configuration.
 - **keenetic-safe-changes** teaches the change workflow: what the router's
-  fail-safe does and does not protect against, and which interfaces will cut off
-  your own access.
+  fail-safe does and does not protect against, which interfaces will cut off
+  your own access, and why the SSH tools are a different risk class.
 - **keenetic-segments** covers building an isolated network the router will
   admit exists. The obvious way produces a guest network that carries traffic
   perfectly and never appears in the web interface, because a segment is
@@ -182,27 +312,9 @@ different manifests but share the same skills and the same server definition.
 - **keenetic-troubleshoot** is an ordered diagnostic playbook for "the internet
   is down", "Wi-Fi is bad" and "one device cannot connect".
 
-## Safety
+---
 
-- **Nothing is saved unless you ask.** Changes apply to the running
-  configuration and are discarded on reboot until `save_config` is called. The
-  server never calls it on its own.
-- **A backup is taken automatically** before the first change of a session.
-- **Every change is verified.** The router accepts some wrong commands silently
-  and changes nothing, so each write is read back and compared before it is
-  reported as successful.
-- **Read-only mode really is read-only.** With `--read-only`, the write tools
-  are not registered at all rather than registered and refusing, so the agent
-  never sees them.
-- **Your password goes in the system keychain**, not in a config file, and never
-  in a log or a tool response.
-- **LAN only.** No cloud, no telemetry, no outbound connection to anything but
-  your router.
-
-Where the password is stored on each platform, and how to report something
-privately, are in [SECURITY.md](SECURITY.md).
-
-## Supported routers
+## 📡 Supported routers
 
 RCI, the API this uses, is a standard part of KeeneticOS rather than a feature
 of expensive models, so this works across the range. Verified against a
@@ -214,7 +326,12 @@ KN-1621), Extra and Carrier (KN-1713, KN-1714, KN-1721), Ultra and Titan
 (KN-1810, KN-1811, KN-1812). Older hardware on 4.x and earlier has RCI too; the
 tool set adapts to the components each router actually has.
 
-## How it works
+The SSH tools work with any Keenetic that has the SSH server component enabled;
+`opkg_manage` additionally needs Entware installed on a USB drive.
+
+---
+
+## 🔬 How it works
 
 Keenetic routers expose RCI, a JSON mirror of their command-line tree, over
 HTTP. This server authenticates with the router's challenge-response scheme,
@@ -222,14 +339,36 @@ keeps one session alive across the agent's questions, and shapes the answers so
 they fit in a model's context: the raw interface listing alone is 32 KB, and the
 NAT table is over 100 KB.
 
+Shell access runs over a fresh SSH connection per command — a stateless connect
+sidesteps every flavour of stale-session bug a long-lived dropbear connection
+collects, at the cost of a handshake per command that nobody notices at agent
+speeds.
+
 There is no coherent public documentation for RCI, so
 [docs/rci-api.md](docs/rci-api.md) is the notes taken while building this: the
 authentication handshake, the paths that exist, the traps, and how to recover a
 command's syntax from the router itself.
 
-## Development
+---
 
-```
+## 🗺️ Roadmap
+
+- [x] Port forwarding, KeenDNS mappings, static DNS, static DHCP, firewall read
+- [x] Mesh nodes, storage, OPKG status, system log, ping, safe reboot
+- [x] Opt-in SSH: exec, file read/write with backup + md5 verify, opkg
+- [ ] `show/netfilter` parsed view (live firewall counters)
+- [ ] Wi-Fi site survey and channel analysis
+- [ ] Traffic statistics over time (interface counters sampling)
+- [ ] npm publication under a scoped name
+- [ ] WireGuard peer management (`interface WireguardN` write tools)
+
+Want one of these? Open an issue.
+
+---
+
+## 🛠️ Development
+
+```bash
 npm install
 npm test          # no router required
 npm run typecheck
@@ -245,7 +384,7 @@ variable always wins over that file, and an installed copy never reads one.
 Tests run against sanitized fixtures captured from a real router. To refresh
 them, and to run a read-only smoke test against your own:
 
-```
+```bash
 KEENETIC_HOST=… KEENETIC_PASSWORD=… npm run capture:fixtures
 KEENETIC_TEST_HOST=… KEENETIC_TEST_PASSWORD=… npm run smoke
 ```
@@ -253,32 +392,28 @@ KEENETIC_TEST_HOST=… KEENETIC_TEST_PASSWORD=… npm run smoke
 Fixtures are anonymized deterministically and a test scans the whole repository
 for anything that looks like a real MAC address, private IP or key.
 
-The setup wizard reads a password from the terminal, which no unit test can
-reach: piped input takes a different code path entirely. That part is checked
-with a script that drives a real pty, so it needs a terminal and cannot run in
-CI:
+### Contributing
 
-```
-KEENETIC_TEST_PASSWORD=… ./scripts/verify-wizard.exp
-```
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-tool`)
+3. Commit your changes (`git commit -m 'Add amazing tool'`)
+4. Push to the branch (`git push origin feature/amazing-tool`)
+5. Open a Pull Request
 
-### Releasing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-A release is a tag and nothing else. There is no version commit to write,
-because there is no version in the repository to change: `package.json` carries
-`0.0.0-dev`, the plugin manifests carry none at all, and the release workflow
-stamps the tag into `package.json` immediately before publishing without
-committing it.
+---
 
-```
-git tag v0.2.2 && git push origin v0.2.2
-```
+## 🙏 Acknowledgments
 
-The workflow refuses a tag that does not name a version, and a test refuses a
-tree that has a version written into it, so the two can never disagree. The
-plugins pin `keenetic-mcp@^0`, which tracks the major only and is meant to be
-edited once, at 1.0.
+| Project | How it fed this one |
+|---|---|
+| **[salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** | The original project this fork is built on: the RCI client, the safety model, the skills, the test suite |
+| **[st412m/keenetic-mcp](https://github.com/st412m/keenetic-mcp)** | The on-router Entware implementation whose documented RCI write shapes (port forwarding, KeenDNS, DNS, DHCP) were ported into the TypeScript tools here |
+| **[foxel/python_ndms2_client](https://github.com/foxel/python_ndms2_client)** | Prior art for the RCI authentication handshake |
 
-## License
+---
 
-MIT
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
