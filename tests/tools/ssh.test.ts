@@ -69,18 +69,21 @@ function payload(result: ToolResult): any {
 }
 
 describe('registration gating', () => {
-  it('registers nothing without an ssh client', () => {
-    expect(Object.keys(harness())).toHaveLength(0);
+  // ssh_check only probes ports, so it is there even with shell access off:
+  // it is how the right KEENETIC_SSH_PORT is found in the first place.
+  it('registers only ssh_check without an ssh client', () => {
+    expect(Object.keys(harness())).toEqual(['ssh_check']);
   });
 
-  it('registers nothing in read-only mode even with ssh configured', () => {
-    expect(Object.keys(harness({ ssh: fakeSsh().client, readOnly: true }))).toHaveLength(0);
+  it('registers only ssh_check in read-only mode even with ssh configured', () => {
+    expect(Object.keys(harness({ ssh: fakeSsh().client, readOnly: true }))).toEqual(['ssh_check']);
   });
 
-  it('registers all four tools with ssh enabled', () => {
+  it('registers all five tools with ssh enabled', () => {
     const h = harness({ ssh: fakeSsh().client });
     expect(Object.keys(h).sort()).toEqual([
       'opkg_manage',
+      'ssh_check',
       'ssh_exec',
       'ssh_read_file',
       'ssh_write_file'
@@ -223,5 +226,48 @@ describe('opkg_manage', () => {
     });
     expect(result.isError).toBe(true);
     expect(ssh.commands).toHaveLength(0);
+  });
+});
+
+describe('ssh_check', () => {
+  it('finds the open port, labels the KeeneticOS CLI port, and advises', async () => {
+    const { createServer } = await import('node:net');
+    const dropbear = createServer(socket => socket.write('SSH-2.0-dropbear_2022.83\r\n'));
+    const cli = createServer(socket => socket.write('SSH-2.0-server\r\n'));
+    await new Promise<void>(r => dropbear.listen(0, '127.0.0.1', r));
+    await new Promise<void>(r => cli.listen(0, '127.0.0.1', r));
+    const dropbearPort = (dropbear.address() as { port: number }).port;
+    const cliPort = (cli.address() as { port: number }).port;
+
+    try {
+      const client = {
+        rci: { get: vi.fn(async () => ({ port: String(cliPort) })), post: vi.fn(), getText: vi.fn() },
+        capabilities: vi.fn()
+      } as unknown as KeeneticClient;
+      const server = new McpServer({ name: 'test', version: '0.0.0' });
+      const handlers: Record<string, Handler> = {};
+      vi.spyOn(server, 'registerTool').mockImplementation(((n: string, _c: unknown, h: Handler) => {
+        handlers[n] = h;
+        return {} as never;
+      }) as never);
+      registerSshTools(server, {
+        client,
+        maxResponseBytes: 25_000,
+        readOnly: false,
+        backup: stubBackup(),
+        routerHost: '127.0.0.1',
+        sshTarget: { port: dropbearPort, user: 'root', auth: 'password' }
+      });
+
+      const out = payload(await handlers['ssh_check']!({}));
+      expect(out.keeneticCliPort).toBe(cliPort);
+      const byPort = Object.fromEntries(out.ports.map((p: { port: number }) => [p.port, p]));
+      expect(byPort[dropbearPort]).toMatchObject({ open: true, role: 'dropbear (Entware shell)' });
+      expect(byPort[cliPort].role).toMatch(/KeeneticOS/);
+      expect(out.advice).toMatch(/should connect/);
+    } finally {
+      dropbear.close();
+      cli.close();
+    }
   });
 });

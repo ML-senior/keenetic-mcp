@@ -117,8 +117,29 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
       annotations: READ_ONLY
     },
     guard(async () => {
-      const raw = await ctx.client.rci.get('show/ping-check');
-      return ok(raw, ctx.maxResponseBytes);
+      const raw = asRecord(await ctx.client.rci.get('show/ping-check'));
+      const profiles = asEntries(raw['pingcheck'] ?? raw['profile']).map(profile => {
+        // A profile that only carries its name has no hosts and is bound to no
+        // interface: it exists (every router has "default") but checks nothing.
+        const active = Object.keys(profile).some(key => key !== 'profile' && key !== 'name');
+        return { ...profile, active };
+      });
+      const anyActive = profiles.some(p => p['active'] === true);
+      return ok(
+        {
+          profiles,
+          active: anyActive,
+          ...(anyActive
+            ? {}
+            : {
+                note:
+                  'No ping-check profile has hosts or an interface bound, so the router is not ' +
+                  'probing anything: get_internet_status reports checked=false for the same ' +
+                  'reason. Set it up under Internet > the connection > Connection check.'
+              })
+        },
+        ctx.maxResponseBytes
+      );
     })
   );
 

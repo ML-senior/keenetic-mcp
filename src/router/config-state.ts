@@ -5,6 +5,14 @@ export const STARTUP_CONFIG = '/ci/startup-config.txt';
 
 /** The router stamps the saved configuration with its own checksum, in a header comment. */
 const SAVED_CHECKSUM = /^!\s*\$+\s*Md5 checksum:\s*([0-9a-f]{32})/im;
+/** ...and with the time of the change it saved: `! $$$ Last change: Sun, 18 Oct 2026 17:24:08 GMT`. */
+const SAVED_LAST_CHANGE = /^!\s*\$+\s*Last change:\s*(.+?)\s*$/im;
+
+function parseDate(value: string | null): number | null {
+  if (value === null) return null;
+  const ms = Date.parse(value.replace(/\s+/g, ' '));
+  return Number.isFinite(ms) ? ms : null;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
@@ -30,7 +38,9 @@ export interface ConfigState {
   lastChangedVia: string | null;
   runningChecksum: string | null;
   savedChecksum: string | null;
-  /** null when the saved checksum could not be read - never a guess. */
+  /** The `Last change` stamped into startup-config.txt when it was saved. */
+  savedLastChangeAt: string | null;
+  /** null when the saved state could not be read - never a guess. */
   unsavedChanges: boolean | null;
   failSafe: { unsaved: boolean; rollbackPending: boolean; secondsLeft: unknown };
 }
@@ -69,19 +79,38 @@ export function lastChangeMoved(before: LastChange, after: LastChange): boolean 
  * the flag stayed `false` throughout, while startup-config.txt was still
  * byte-for-byte the old one - a reboot would have restored everything.
  *
- * The checksum is the signal that actually moves, so the running one is
- * compared against the header the router writes into startup-config.txt.
+ * Nor is the checksum alone enough. Measured on 5.2 Alpha 11: an interface
+ * removed over RCI moved `date` but left `checksum` at the saved value until
+ * `system configuration save` ran. So a change is reported as unsaved when
+ * either the checksum differs or the running change is newer than the
+ * `Last change` the router wrote into the saved file.
  */
 export async function readConfigState(rci: Rci): Promise<ConfigState> {
   const last = await readLastChange(rci);
 
   let savedChecksum: string | null = null;
+  let savedLastChange: string | null = null;
   try {
-    savedChecksum = SAVED_CHECKSUM.exec(await rci.getText(STARTUP_CONFIG))?.[1] ?? null;
+    const text = await rci.getText(STARTUP_CONFIG);
+    savedChecksum = SAVED_CHECKSUM.exec(text)?.[1] ?? null;
+    savedLastChange = SAVED_LAST_CHANGE.exec(text)?.[1] ?? null;
   } catch {
     // Reporting "saved" on a failed read would be the very error this replaces.
     savedChecksum = null;
   }
+
+  const runningAt = parseDate(last.date);
+  const savedAt = parseDate(savedLastChange);
+  const newerThanSaved = runningAt !== null && savedAt !== null ? runningAt > savedAt : null;
+  const checksumDiffers =
+    last.checksum !== null && savedChecksum !== null ? last.checksum !== savedChecksum : null;
+
+  let unsavedChanges: boolean | null;
+  if (checksumDiffers === true || newerThanSaved === true) unsavedChanges = true;
+  else if (checksumDiffers === null && newerThanSaved === null) unsavedChanges = null;
+  // A matching checksum with no date to compare is the old, weaker answer;
+  // keep it rather than claiming not to know.
+  else unsavedChanges = false;
 
   return {
     lastChangedAt: last.date,
@@ -89,8 +118,8 @@ export async function readConfigState(rci: Rci): Promise<ConfigState> {
     lastChangedVia: last.agent,
     runningChecksum: last.checksum,
     savedChecksum,
-    unsavedChanges:
-      last.checksum === null || savedChecksum === null ? null : last.checksum !== savedChecksum,
+    savedLastChangeAt: savedLastChange,
+    unsavedChanges,
     failSafe: last.failSafe
   };
 }

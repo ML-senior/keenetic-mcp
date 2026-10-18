@@ -27,6 +27,28 @@ async function readInterface(ctx: ToolContext, name: string): Promise<Record<str
 
 const VPN_TYPES = new Set(['Wireguard', 'OpenVPN', 'L2TP', 'PPTP', 'IPsec', 'Sstp']);
 
+/** Connection policies that route through `name`, by policy name and description. */
+async function policiesUsing(ctx: ToolContext, name: string): Promise<Array<{ policy: string; description: string }>> {
+  const raw = await ctx.client.rci.get('ip/policy');
+  const tree = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const out: Array<{ policy: string; description: string }> = [];
+  for (const [policy, value] of Object.entries(tree)) {
+    const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+    const permits = Array.isArray(record['permit']) ? record['permit'] : record['permit'] ? [record['permit']] : [];
+    const uses = permits.some(
+      entry => typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>)['interface'] === name
+    );
+    if (uses) {
+      out.push({ policy, description: typeof record['description'] === 'string' ? record['description'] : '' });
+    }
+  }
+  return out;
+}
+
+function isNotFound(error: unknown): boolean {
+  return /404|does not exist|not found|unable to find/i.test((error as Error)?.message ?? '');
+}
+
 function matchesKind(id: string, record: Record<string, unknown>, kind: InterfaceKind): boolean {
   const type = typeof record['type'] === 'string' ? record['type'] : '';
   switch (kind) {
@@ -152,6 +174,80 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
       });
 
       return ok(describeWrite({ interface: name, state }, snapshot.path));
+    })
+  );
+
+  server.registerTool(
+    'delete_interface',
+    {
+      title: 'Delete a VPN tunnel interface',
+      description:
+        'Removes a VPN interface (WireGuard, OpenVPN, L2TP, PPTP, IPsec, SSTP) together with ' +
+        'its keys and peers. The router also drops it from every connection policy; the ' +
+        'result lists which policies lost it, so devices on them now leave through what is ' +
+        'left. Refuses physical interfaces, bridges (use delete_segment) and whatever carries ' +
+        'the default route. NOT saved until save_config.',
+      inputSchema: {
+        name: z.string().describe('Interface id from list_interfaces, for example Wireguard0.')
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+    },
+    guard(async ({ name }): Promise<ToolResult> => {
+      let record: Record<string, unknown>;
+      try {
+        record = await readInterface(ctx, name);
+      } catch (error) {
+        if (isNotFound(error)) {
+          return fail(new Error(`There is no interface "${name}". Call list_interfaces for the exact ids.`));
+        }
+        throw error;
+      }
+      const type = typeof record['type'] === 'string' ? record['type'] : '';
+      if (!VPN_TYPES.has(type)) {
+        return fail(
+          new Error(
+            `"${name}" is a ${type || 'non-VPN'} interface; delete_interface only removes VPN tunnels. ` +
+              (type === 'Bridge' ? 'Use delete_segment for a network segment.' : 'Nothing was changed.')
+          )
+        );
+      }
+      if (record['defaultgw'] === true) {
+        return fail(
+          new Error(
+            `"${name}" carries the default route; deleting it would cut the internet off. ` +
+              'Move the default route first. Nothing was changed.'
+          )
+        );
+      }
+
+      const policies = await policiesUsing(ctx, name);
+      const snapshot = await ctx.backup.ensure();
+      await verifiedWrite({
+        apply: () => ctx.client.rci.post({ interface: { [name]: { no: true } } }),
+        readBack: async () => {
+          try {
+            await readInterface(ctx, name);
+            return false;
+          } catch (error) {
+            if (isNotFound(error)) return true;
+            throw error;
+          }
+        },
+        check: gone => gone,
+        what: `removal of ${name}`
+      });
+
+      return ok({
+        ...describeWrite({ deleted: name, type }, snapshot.path),
+        removedFromPolicies: policies,
+        ...(policies.length > 0
+          ? {
+              policyNote:
+                'These policies no longer route through the tunnel. A policy left with only the ' +
+                'WAN connection behaves like no policy; review them with list_policies.'
+            }
+          : {})
+      });
     })
   );
 }

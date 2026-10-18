@@ -8,9 +8,9 @@
 [![MCP](https://img.shields.io/badge/MCP-server-black)](https://modelcontextprotocol.io)
 [![KeeneticOS](https://img.shields.io/badge/KeeneticOS-5.1%20tested-green)](#supported-routers)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](#requirements)
-[![tools](https://img.shields.io/badge/MCP%20tools-42-orange)](#full-tool-reference)
+[![tools](https://img.shields.io/badge/MCP%20tools-44-orange)](#full-tool-reference)
 
-> **Fork of [salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** — extended from 18 to 42 tools: full network-service management (port forwarding, KeenDNS, DNS, static DHCP, firewall), mesh and storage monitoring, log and ping diagnostics, and **opt-in SSH access** for Entware packages and their configs. Same safety model, same zero-install philosophy.
+> **Fork of [salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** — extended from 18 to 44 tools: full network-service management (port forwarding, KeenDNS, DNS, static DHCP, firewall), mesh and storage monitoring, log and ping diagnostics, and **opt-in SSH access** for Entware packages and their configs. Same safety model, same zero-install philosophy.
 
 ---
 
@@ -160,10 +160,12 @@ stored config** (written by `init`).
 | `KEENETIC_PASSWORD` | — | *(keychain)* | Router password |
 | — | `--read-only` | off | Never register the write tools |
 | — | `--max-response-bytes` | `25000` | Cap on any tool response |
-| `KEENETIC_SSH` | `--ssh` | **off** | Enable the SSH/Entware tools |
-| `KEENETIC_SSH_PORT` | `--ssh-port` | `22` | SSH port (`222` for Entware dropbear) |
-| `KEENETIC_SSH_USER` | — | router login | SSH user (`root` for dropbear) |
-| `KEENETIC_SSH_PASSWORD` | — | router password | SSH password |
+| `KEENETIC_SSH` | `--ssh` | **off** (on if set up in `init`) | Enable the SSH/Entware tools; `0` turns a stored setup off |
+| `KEENETIC_SSH_PORT` | `--ssh-port` | `222` | Entware dropbear port. `22` is the KeeneticOS CLI, which is not a shell |
+| `KEENETIC_SSH_USER` | — | `root` | SSH user |
+| `KEENETIC_SSH_PASSWORD` | — | *(keychain)* | SSH password. The router password is reused only when the SSH user *is* the router login |
+| `KEENETIC_SSH_KEY` | `--ssh-key` | — | Private key file instead of a password (`~/` is expanded) |
+| `KEENETIC_SSH_KEY_PASSPHRASE` | — | *(keychain)* | Passphrase for that key |
 | `KEENETIC_STATE_DIR` | — | per-OS state dir | Where backups live |
 
 Environment variables are what you want in a container. The wizard reads
@@ -173,8 +175,9 @@ passwords from the terminal; nothing ever lands in a log or a tool response.
 
 ## 📖 Full tool reference
 
-**42 tools.** Read tools are always available; write tools hide in
-`--read-only` mode; SSH tools hide unless `--ssh` is passed.
+**44 tools.** Read tools are always available; write tools hide in
+`--read-only` mode; SSH tools hide unless shell access is enabled (`--ssh` or
+the SSH step of `init`) — except `ssh_check`, which only probes ports.
 
 ### 👀 Read
 
@@ -201,7 +204,8 @@ passwords from the terminal; nothing ever lands in a log or a tool response.
 | `get_mesh_nodes` | Mesh controller and extenders, with per-node client counts |
 | `get_media` | USB/flash partitions, free space, what uses them |
 | `get_opkg_status` | Entware binding: which drive, which init script |
-| `get_ping_check` | router-side reachability probes for its internet links |
+| `get_ping_check` | router-side reachability probes for its internet links; says so when no profile is actually probing |
+| `ssh_check` | which SSH servers answer on the router (no login): configured port, 22, 222 and the KeeneticOS one, with advice |
 | `run_ping` | pings a host from the machine running this server |
 
 ### ✏️ Change
@@ -210,6 +214,7 @@ passwords from the terminal; nothing ever lands in a log or a tool response.
 |---|---|
 | `update_device` | rename, block or allow, assign a routing policy, schedule or priority |
 | `set_interface_state` | bring an interface up or down |
+| `delete_interface` | remove a VPN tunnel (WireGuard, OpenVPN, …); refuses physical, bridge and default-route interfaces; lists the policies that lost it |
 | `create_segment` | a guest or IoT network the web interface actually lists, with Wi-Fi, DHCP and optional VPN routing |
 | `delete_segment` | remove a segment and everything created with it |
 | `set_port_forwarding` / `remove_port_forwarding` | forward an external TCP/UDP port to a device, addressed by MAC (an IP of a known device is resolved; an unknown IP is refused) |
@@ -271,14 +276,36 @@ node dist/index.js --ssh
 # or: KEENETIC_SSH=1 node dist/index.js
 ```
 
-By default it connects to the router host on **port 22 with the web-interface
-credentials** (the KeeneticOS SSH server component — enable it in the router's
-web UI under *Management → SSH*). For Entware's own dropbear instead:
+Keenetic has **two** SSH servers, and only one of them is a shell:
+
+| Server | Default port | User | What you get |
+|---|---|---|---|
+| Entware **dropbear** | **222** | `root` (password `keenetic` until changed) | a Linux shell: `opkg`, `/opt`, services — what the SSH tools need |
+| KeeneticOS SSH component | 22 (often moved, e.g. 2022) | the router account | the router **CLI** (`show version`, …) — not a shell |
+
+So the defaults are **222 / root**, and the router password is never handed to
+`root`. The easiest setup is the wizard — after the router login it asks
+whether to enable shell access, then for port, user, and **password or key
+file**, logs in to check it really reached Entware, and stores the secret in
+the system keychain (config.json only gets port, user and key path):
 
 ```bash
-KEENETIC_SSH=1 KEENETIC_SSH_PORT=222 KEENETIC_SSH_USER=root \
-KEENETIC_SSH_PASSWORD=… node dist/index.js
+node dist/index.js init
 ```
+
+Or by environment:
+
+```bash
+KEENETIC_SSH=1 KEENETIC_SSH_PASSWORD=… node dist/index.js            # 222, root
+KEENETIC_SSH=1 KEENETIC_SSH_KEY=~/.ssh/keenetic node dist/index.js   # key auth
+KEENETIC_SSH=1 KEENETIC_SSH_PORT=2222 KEENETIC_SSH_PASSWORD=… node dist/index.js
+```
+
+Not sure which port? Ask the agent to run **`ssh_check`**: it probes the
+configured port, 22, 222 and the port the KeeneticOS server is set to (read from
+`ip ssh`), shows each banner, and says what to set. If nothing answers on 222,
+dropbear is not running: `opkg install dropbear` and
+`/opt/etc/init.d/S51dropbear start`.
 
 Typical flow an agent can now drive end-to-end:
 
@@ -326,7 +353,7 @@ KN-1621), Extra and Carrier (KN-1713, KN-1714, KN-1721), Ultra and Titan
 (KN-1810, KN-1811, KN-1812). Older hardware on 4.x and earlier has RCI too; the
 tool set adapts to the components each router actually has.
 
-The SSH tools work with any Keenetic that has the SSH server component enabled;
+The SSH tools work with any Keenetic running Entware with dropbear;
 `opkg_manage` additionally needs Entware installed on a USB drive.
 
 ---

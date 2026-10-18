@@ -18,6 +18,13 @@ export interface InterfaceSummary {
   state: string;
   address: string;
   defaultGateway: boolean;
+  /** Physical ports only: the switch-side name and what the port is wired as. */
+  port?: {
+    rciName: string;
+    role: 'wan' | 'lan';
+    speedMbps: number | null;
+    duplex: string | null;
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -66,15 +73,42 @@ export function projectDevice(host: unknown): DeviceSummary {
   };
 }
 
+/**
+ * Physical ports come back keyed by their label ("0".."4") with an empty
+ * `state` and no description; the useful part is in `id` (the switch-side
+ * name) and the link fields. The WAN port sits on its own switch,
+ * GigabitEthernet1, which is why its label is 0 while LAN ports count from 1.
+ */
+function projectPort(i: Record<string, unknown>): NonNullable<InterfaceSummary['port']> {
+  const rciName = str(i, 'id');
+  const speed = Number(i['speed']);
+  return {
+    rciName,
+    role: rciName.startsWith('GigabitEthernet0/') ? 'lan' : 'wan',
+    speedMbps: Number.isFinite(speed) && speed > 0 ? speed : null,
+    duplex: str(i, 'duplex') || null
+  };
+}
+
 export function projectInterface(id: string, iface: unknown): InterfaceSummary {
   const i = asRecord(iface);
-  return {
+  const type = str(i, 'type');
+  const summary: InterfaceSummary = {
     id,
-    type: str(i, 'type'),
+    type,
     description: str(i, 'description'),
     link: str(i, 'link'),
-    state: str(i, 'state'),
+    // A port has no administrative state of its own; its link is the answer.
+    state: str(i, 'state') || (type === 'Port' ? str(i, 'link') : ''),
     address: str(i, 'address'),
     defaultGateway: bool(i, 'defaultgw')
   };
+  if (type === 'Port') {
+    const port = projectPort(i);
+    summary.port = port;
+    if (!summary.description) {
+      summary.description = port.role === 'wan' ? 'WAN port' : `LAN port ${str(i, 'label') || id}`;
+    }
+  }
+  return summary;
 }

@@ -116,3 +116,102 @@ describe('runInit', () => {
     expect(order).toEqual(['verify', 'save']);
   });
 });
+
+describe('runInit SSH', () => {
+  /** Answers prompts by matching their text; anything unmatched takes the default. */
+  function answering(map: Record<string, string>): InitDeps['prompt'] {
+    return vi.fn(async (question: string) => {
+      for (const [needle, answer] of Object.entries(map)) {
+        if (question.includes(needle)) return answer;
+      }
+      return '';
+    });
+  }
+
+  it('skips SSH by default and writes no ssh block', async () => {
+    const verifySsh = vi.fn();
+    const { deps, dir } = await makeDeps({ verifySsh });
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(verifySsh).not.toHaveBeenCalled();
+    await expect(readStoredConfig(dir)).resolves.toEqual({ host: '192.0.2.1', login: 'admin' });
+  });
+
+  it('asks port, user and password, verifies, and stores the password in the keychain', async () => {
+    const hidden = vi
+      .fn()
+      .mockResolvedValueOnce('router-pass')
+      .mockResolvedValueOnce('dropbear-pass-1');
+    const verifySsh = vi.fn(async () => ({ ok: true as const, detail: 'Linux aarch64, Entware found' }));
+    const { deps, out, dir } = await makeDeps({
+      prompt: answering({ 'Enable SSH': 'y' }),
+      hidden,
+      verifySsh
+    });
+
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(verifySsh).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '192.0.2.1', port: 222, user: 'root', password: 'dropbear-pass-1' })
+    );
+    expect(deps.store.save).toHaveBeenCalledWith('ssh:root@192.0.2.1', 'dropbear-pass-1');
+    await expect(readStoredConfig(dir)).resolves.toEqual({
+      host: '192.0.2.1',
+      login: 'admin',
+      ssh: { port: 222, user: 'root', auth: 'password' }
+    });
+    expect(out.join('\n')).not.toContain('dropbear-pass-1');
+    expect(out.join('\n')).toMatch(/root@192\.0\.2\.1:222/);
+  });
+
+  it('takes a key file and keeps only its path on disk', async () => {
+    const hidden = vi.fn().mockResolvedValueOnce('router-pass').mockResolvedValueOnce('');
+    const verifySsh = vi.fn(async () => ({ ok: true as const, detail: 'ok' }));
+    const { deps, dir } = await makeDeps({
+      prompt: answering({
+        'Enable SSH': 'yes',
+        'SSH port': '2222',
+        'password or key': 'key',
+        'key path': '/keys/router'
+      }),
+      hidden,
+      verifySsh,
+      readKey: vi.fn(async () => Buffer.from('PRIVATE'))
+    });
+
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(verifySsh).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 2222, privateKey: Buffer.from('PRIVATE'), keyPath: '/keys/router' })
+    );
+    await expect(readStoredConfig(dir)).resolves.toEqual({
+      host: '192.0.2.1',
+      login: 'admin',
+      ssh: { port: 2222, user: 'root', auth: 'key', keyPath: '/keys/router' }
+    });
+    // No passphrase, nothing to put in the keychain beyond the router password.
+    expect(deps.store.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops SSH when the login fails and the user does not insist', async () => {
+    const verifySsh = vi.fn(async () => ({ ok: false as const, reason: 'ECONNREFUSED' }));
+    const { deps, out, dir } = await makeDeps({
+      prompt: answering({ 'Enable SSH': 'y' }),
+      verifySsh
+    });
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(out.join('\n')).toMatch(/ECONNREFUSED/);
+    await expect(readStoredConfig(dir)).resolves.toEqual({ host: '192.0.2.1', login: 'admin' });
+  });
+
+  it('re-asks a bad port instead of failing', async () => {
+    const prompt = vi.fn(async (q: string) => {
+      if (q.includes('Enable SSH')) return 'y';
+      if (q.includes('SSH port')) return prompt.mock.calls.filter(c => String(c[0]).includes('SSH port')).length === 1 ? 'abc' : '222';
+      return '';
+    });
+    const { deps, out } = await makeDeps({
+      prompt,
+      verifySsh: vi.fn(async () => ({ ok: true as const, detail: 'ok' }))
+    });
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(out.join('\n')).toMatch(/1-65535/);
+  });
+});

@@ -60,34 +60,71 @@ export interface SwitchPort {
 }
 
 /**
+ * The whole interface configuration in one request (~19 KB on a Keenetic
+ * Ultra), or null on firmware that does not serve the collection.
+ *
+ * One read instead of probing `Bridge0..15` and `GigabitEthernet0/0..15` by
+ * name: every miss there is a 404 the router writes to its system log as an
+ * error ("unable to find Bridge7"), so a single list_segments left seventeen
+ * error lines behind and buried anything real in get_log.
+ */
+export async function readInterfaceTree(rci: Rci): Promise<Record<string, unknown> | null> {
+  const tree = await readOptional(rci, 'show/rc/interface');
+  return tree !== null && Object.keys(tree).length > 0 ? tree : null;
+}
+
+const SWITCH_PORT = /^GigabitEthernet0\/(\d+)$/;
+const BRIDGE = /^Bridge(\d+)$/;
+
+function toSwitchPort(name: string, raw: Record<string, unknown>, index: number): SwitchPort | null {
+  const switchport = asRecord(raw['switchport']);
+  if (Object.keys(switchport).length === 0) return null;
+  const trunkVids = toArray(switchport['trunk'])
+    .map(entry => asVid(asRecord(entry)['vid']))
+    .filter((vid): vid is number => vid !== null);
+  return {
+    name,
+    label: typeof raw['rename'] === 'string' ? raw['rename'] : String(index + 1),
+    trunkVids,
+    accessVid: asVid(asRecord(switchport['access'])['vid'])
+  };
+}
+
+/**
  * Every physical port of the built-in switch.
  *
- * Probed one at a time rather than read from `show/interface`, which is 32 KB.
- * Ports are contiguous from zero, so the first gap is the end of the switch.
- * An entry without a `switchport` block is some other interface sharing the
- * prefix and is not a port a VLAN can be trunked over.
+ * Taken from the interface tree when the router serves it. Older firmware
+ * gets the fallback: probe one at a time, stopping at the first gap, since
+ * ports are contiguous from zero. An entry without a `switchport` block is
+ * some other interface sharing the prefix and is not a port a VLAN can be
+ * trunked over.
  */
-export async function readSwitchPorts(rci: Rci): Promise<SwitchPort[]> {
+export async function readSwitchPorts(
+  rci: Rci,
+  tree?: Record<string, unknown> | null
+): Promise<SwitchPort[]> {
+  const source = tree === undefined ? await readInterfaceTree(rci) : tree;
   const ports: SwitchPort[] = [];
+
+  if (source !== null) {
+    const names = Object.keys(source)
+      .map(name => ({ name, match: SWITCH_PORT.exec(name) }))
+      .filter((entry): entry is { name: string; match: RegExpExecArray } => entry.match !== null)
+      .map(({ name, match }) => ({ name, index: Number(match[1]) }))
+      .sort((a, b) => a.index - b.index);
+    for (const { name, index } of names) {
+      const port = toSwitchPort(name, asRecord(source[name]), index);
+      if (port) ports.push(port);
+    }
+    return ports;
+  }
 
   for (let index = 0; index < PROBE_LIMIT; index += 1) {
     const name = `GigabitEthernet0/${index}`;
     const raw = await readOptional(rci, `show/rc/interface/${name}`);
     if (raw === null) break;
-
-    const switchport = asRecord(raw['switchport']);
-    if (Object.keys(switchport).length === 0) continue;
-
-    const trunkVids = toArray(switchport['trunk'])
-      .map(entry => asVid(asRecord(entry)['vid']))
-      .filter((vid): vid is number => vid !== null);
-
-    ports.push({
-      name,
-      label: typeof raw['rename'] === 'string' ? raw['rename'] : String(index + 1),
-      trunkVids,
-      accessVid: asVid(asRecord(switchport['access'])['vid'])
-    });
+    const port = toSwitchPort(name, raw, index);
+    if (port) ports.push(port);
   }
 
   return ports;
@@ -106,13 +143,26 @@ export interface RouterInventory {
 
 /** Everything the allocator needs, so nothing is handed out twice. */
 export async function readInventory(rci: Rci): Promise<RouterInventory> {
-  const ports = await readSwitchPorts(rci);
+  const tree = await readInterfaceTree(rci);
+  const ports = await readSwitchPorts(rci, tree);
+
+  const bridges: Array<[number, Record<string, unknown>]> = [];
+  if (tree !== null) {
+    for (const [name, value] of Object.entries(tree)) {
+      const match = BRIDGE.exec(name);
+      if (match) bridges.push([Number(match[1]), asRecord(value)]);
+    }
+    bridges.sort((a, b) => a[0] - b[0]);
+  } else {
+    for (let index = 0; index < PROBE_LIMIT; index += 1) {
+      const raw = await readOptional(rci, `show/rc/interface/Bridge${index}`);
+      if (raw !== null) bridges.push([index, raw]);
+    }
+  }
 
   const bridgeNumbers: number[] = [];
   const subnets = new Set<number>();
-  for (let index = 0; index < PROBE_LIMIT; index += 1) {
-    const raw = await readOptional(rci, `show/rc/interface/Bridge${index}`);
-    if (raw === null) continue;
+  for (const [index, raw] of bridges) {
     bridgeNumbers.push(index);
     const address = asRecord(asRecord(raw['ip'])['address'])['address'];
     const octet = typeof address === 'string' ? Number(address.split('.')[2]) : NaN;

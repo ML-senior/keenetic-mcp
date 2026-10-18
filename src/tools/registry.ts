@@ -12,6 +12,10 @@ export interface ToolContext {
   backup: BackupGuard;
   /** Shell access; absent unless the server was started with --ssh. */
   ssh?: SshClient;
+  /** The router address without scheme or HTTP port, for non-HTTP probes. */
+  routerHost?: string;
+  /** What the SSH client was configured with, never the secret. */
+  sshTarget?: { port: number; user: string; auth: 'password' | 'key' };
 }
 
 /**

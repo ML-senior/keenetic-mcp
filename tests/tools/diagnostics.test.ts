@@ -197,3 +197,21 @@ describe('reboot_router', () => {
     expect(out.rebooting).toBe(true);
   });
 });
+
+describe('get_ping_check', () => {
+  it('marks a profile with live data as active', async () => {
+    const out = payload(await harness().handlers['get_ping_check']!({}));
+    expect(out.active).toBe(true);
+    expect(out.note).toBeUndefined();
+  });
+
+  // Captured from a KN-1810 on 5.2: the stock "default" profile, bound to nothing.
+  it('explains a bare default profile instead of passing it through', async () => {
+    const h = harness();
+    DATA['show/ping-check'] = { pingcheck: [{ profile: 'default' }] };
+    const out = payload(await h.handlers['get_ping_check']!({}));
+    expect(out.active).toBe(false);
+    expect(out.note).toMatch(/not probing anything/);
+    DATA['show/ping-check'] = { profile: [{ name: 'default', status: 'ok' }] };
+  });
+});

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import type { SshClient } from '../ssh/client.js';
+import { probePort, type SshClient } from '../ssh/client.js';
 import { checkCommand, checkReadablePath, checkWritablePath } from '../ssh/guard.js';
 import { fail, guard, ok, READ_ONLY, type ToolContext, type ToolResult } from './registry.js';
 
@@ -43,6 +43,8 @@ async function runChecked(
  * does not get to see these tools at all.
  */
 export function registerSshTools(server: McpServer, ctx: ToolContext): void {
+  registerSshCheck(server, ctx);
+
   const ssh = ctx.ssh;
   if (!ssh || ctx.readOnly) return;
 
@@ -199,6 +201,89 @@ export function registerSshTools(server: McpServer, ctx: ToolContext): void {
       const command = pkg ? `opkg ${action} ${pkg}` : `opkg ${action}`;
       const timeoutMs = Math.min(timeout_sec ?? 120, 300) * 1000;
       return runChecked(ssh, command, timeoutMs, ctx.maxResponseBytes);
+    })
+  );
+}
+
+/** The port the KeeneticOS SSH server is configured on, or null if unknown. */
+async function keeneticSshPort(ctx: ToolContext): Promise<number | null> {
+  try {
+    const raw = (await ctx.client.rci.get('show/rc/ip/ssh')) as Record<string, unknown> | null;
+    const port = Number(raw?.['port'] ?? 22);
+    return Number.isInteger(port) ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which SSH servers answer on the router, without logging into any of them.
+ *
+ * Read-only and always registered, including when shell access is off: it is
+ * the tool for finding out what to put in KEENETIC_SSH_PORT in the first place.
+ */
+function registerSshCheck(server: McpServer, ctx: ToolContext): void {
+  server.registerTool(
+    'ssh_check',
+    {
+      title: 'Find the SSH servers on the router',
+      description:
+        'Probes the router for SSH servers without logging in: the configured SSH port, ' +
+        '22, 222 (Entware dropbear default) and the port the KeeneticOS SSH server is set ' +
+        'to. Reports which answer, their banners, and which one the SSH tools should use. ' +
+        'Run this when ssh_exec fails to connect, or before enabling shell access.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false }
+    },
+    guard(async (): Promise<ToolResult> => {
+      const host = ctx.routerHost;
+      if (!host) return fail(new Error('The router address is not known to this server.'));
+
+      const ndmPort = await keeneticSshPort(ctx);
+      const configured = ctx.sshTarget?.port ?? null;
+      const ports = [...new Set([configured, 22, 222, ndmPort].filter((p): p is number => p !== null))];
+      const probes = await Promise.all(ports.map(port => probePort(host, port)));
+
+      const results = probes.map(p => ({
+        port: p.port,
+        open: p.open,
+        banner: p.banner,
+        role:
+          p.port === ndmPort
+            ? 'KeeneticOS SSH server (router CLI, not a shell)'
+            : p.banner && /dropbear/i.test(p.banner)
+              ? 'dropbear (Entware shell)'
+              : p.open
+                ? 'unknown SSH server'
+                : 'closed',
+        ...(p.error ? { error: p.error } : {})
+      }));
+
+      const shell = results.find(r => r.open && r.port !== ndmPort);
+      const configuredOpen = configured === null ? null : results.find(r => r.port === configured)?.open ?? false;
+
+      let advice: string;
+      if (ctx.sshTarget && configuredOpen && configured !== ndmPort) {
+        advice = `The configured port ${String(configured)} answers; the SSH tools should connect.`;
+      } else if (ctx.sshTarget && configured === ndmPort) {
+        advice =
+          `The configured port ${String(configured)} is the KeeneticOS CLI, where shell commands ` +
+          'such as opkg or cat do not exist. Point KEENETIC_SSH_PORT at Entware dropbear (222).';
+      } else if (shell) {
+        advice = `A shell answers on ${String(shell.port)}. Set KEENETIC_SSH_PORT=${String(shell.port)} (or re-run init).`;
+      } else {
+        advice =
+          'No Entware shell answers. Install and start dropbear on the router (opkg install ' +
+          'dropbear; /opt/etc/init.d/S51dropbear start) - it listens on 222 by default.';
+      }
+
+      return ok({
+        host,
+        configured: ctx.sshTarget ?? null,
+        keeneticCliPort: ndmPort,
+        ports: results,
+        advice
+      });
     })
   );
 }

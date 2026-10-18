@@ -375,3 +375,30 @@ describe('teardownSegment', () => {
     expect(parseLines(post), 'the steps after it still ran').toContain('no interface Bridge2');
   });
 });
+
+/**
+ * Every probe miss is a 404 the router logs as an error, so one list_segments
+ * used to leave ~17 "unable to find BridgeN" lines in the system log.
+ */
+describe('readInventory with the interface tree', () => {
+  it('reads ports and bridges from one request, probing nothing by name', async () => {
+    const tree = {
+      GigabitEthernet0: { up: true },
+      'GigabitEthernet0/1': { rename: '2', switchport: { access: { vid: '1' } } },
+      'GigabitEthernet0/0': { rename: '1', switchport: { access: { vid: '1' }, trunk: { vid: '3' } } },
+      'GigabitEthernet0/Vlan1': { description: 'Home VLAN' },
+      Bridge0: { ip: { address: { address: '192.168.1.1' } } },
+      Bridge2: { ip: { address: { address: '192.168.3.1' } } }
+    };
+    const rci = rciWith({ 'show/rc/interface': tree });
+
+    const inventory = await readInventory(rci);
+
+    expect(inventory.ports.map(p => p.name)).toEqual(['GigabitEthernet0/0', 'GigabitEthernet0/1']);
+    expect(inventory.bridgeNumbers).toEqual([0, 2]);
+    expect(inventory.subnets).toEqual([1, 3]);
+    expect(inventory.vlanIds).toEqual([1, 3]);
+    const paths = (rci.get as ReturnType<typeof vi.fn>).mock.calls.map(c => String(c[0]));
+    expect(paths.filter(p => p.startsWith('show/rc/interface/'))).toEqual([]);
+  });
+});

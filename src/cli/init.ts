@@ -1,13 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
 import {
   configDir,
   gatewayCommand,
   identifyRouter,
   parseGateway,
-  writeStoredConfig
+  secretAccounts,
+  writeStoredConfig,
+  type StoredSshConfig
 } from '../config/discover.js';
+import { DEFAULT_SSH_PORT, DEFAULT_SSH_USER, expandHome, parsePort } from '../config/load.js';
+import { createSshClient, type SshClientOptions } from '../ssh/client.js';
 import { createSecretStore, spawnRunner, type SecretStore } from '../config/secrets.js';
 import { createClient } from '../router/client.js';
 
@@ -34,6 +39,80 @@ export interface InitDeps {
   discoverGateway: () => Promise<string | null>;
   identify: (host: string) => Promise<{ realm: string } | null>;
   verify: (host: string, login: string, password: string) => Promise<VerifyOk | VerifyFailed>;
+  /** Logs in over SSH and runs a trivial command. Absent: SSH is not offered. */
+  verifySsh?: (opts: SshClientOptions) => Promise<{ ok: true; detail: string } | VerifyFailed>;
+  readKey?: (path: string) => Promise<Buffer>;
+}
+
+function yes(answer: string): boolean {
+  return ['y', 'yes', 'д', 'да'].includes(answer.trim().toLowerCase());
+}
+
+interface SshAnswers {
+  config: StoredSshConfig;
+  /** The password or the key passphrase, whichever applies; '' for none. */
+  secret: string;
+}
+
+/**
+ * The optional second half: shell access over SSH to Entware's dropbear.
+ * Returns null when the user declines or gives up; nothing is stored then.
+ */
+async function askSsh(deps: InitDeps, host: string): Promise<SshAnswers | null> {
+  if (!deps.verifySsh) return null;
+  deps.out('');
+  deps.out('Shell access (optional): lets the agent run commands in Entware over SSH -');
+  deps.out('opkg, files under /opt, services. It is a separate login from the router one.');
+  if (!yes(await deps.prompt('Enable SSH shell access? (y/N)', 'N'))) return null;
+
+  let port: number;
+  for (;;) {
+    const raw = (await deps.prompt('SSH port (Entware dropbear: 222)', String(DEFAULT_SSH_PORT))) || String(DEFAULT_SSH_PORT);
+    try {
+      port = parsePort(raw);
+      break;
+    } catch (error) {
+      deps.out((error as Error).message);
+    }
+  }
+  const user = (await deps.prompt('SSH user', DEFAULT_SSH_USER)) || DEFAULT_SSH_USER;
+  const method = ((await deps.prompt('Authenticate with password or key? (password/key)', 'password')) || 'password')
+    .trim()
+    .toLowerCase();
+
+  const opts: SshClientOptions = { host, port, user };
+  let config: StoredSshConfig;
+  let secret: string;
+
+  if (method.startsWith('k')) {
+    const keyPath = expandHome((await deps.prompt('Private key path', '~/.ssh/id_ed25519')) || '~/.ssh/id_ed25519');
+    try {
+      opts.privateKey = await (deps.readKey ?? (path => readFile(path)))(keyPath);
+    } catch (error) {
+      deps.out(`Cannot read ${keyPath}: ${(error as Error).message}. SSH was not set up.`);
+      return null;
+    }
+    opts.keyPath = keyPath;
+    secret = await deps.hidden('Key passphrase (empty if none)');
+    if (secret) opts.passphrase = secret;
+    config = { port, user, auth: 'key', keyPath };
+  } else {
+    secret = await deps.hidden(`SSH password for ${user} (Entware default: keenetic)`);
+    opts.password = secret;
+    config = { port, user, auth: 'password' };
+  }
+
+  const result = await deps.verifySsh(opts);
+  if (result.ok) {
+    deps.out(`SSH ok: ${result.detail}`);
+  } else {
+    deps.out(`SSH login failed: ${result.reason}`);
+    if (!yes(await deps.prompt('Save these SSH settings anyway? (y/N)', 'N'))) {
+      deps.out('SSH was not set up. Re-run init when dropbear is reachable.');
+      return null;
+    }
+  }
+  return { config, secret };
 }
 
 /**
@@ -63,11 +142,28 @@ export async function runInit(deps: InitDeps): Promise<number> {
   }
   deps.out(`${result.model}, KeeneticOS ${result.firmware}, ${result.components} components`);
 
-  const path = await writeStoredConfig(deps.configDir, { host, login });
-  const where = await deps.store.save(`${login}@${host}`, password);
+  const ssh = await askSsh(deps, host);
+
+  const where = await deps.store.save(secretAccounts.router(login, host), password);
+  let sshWhere: string | null = null;
+  if (ssh && ssh.secret) {
+    const account =
+      ssh.config.auth === 'key'
+        ? secretAccounts.sshPassphrase(ssh.config.user, host)
+        : secretAccounts.sshPassword(ssh.config.user, host);
+    sshWhere = await deps.store.save(account, ssh.secret);
+  }
+  const path = await writeStoredConfig(deps.configDir, ssh ? { host, login, ssh: ssh.config } : { host, login });
 
   deps.out('');
   deps.out(`Password stored in ${where}`);
+  if (ssh) {
+    const how = ssh.config.auth === 'key' ? `key ${ssh.config.keyPath ?? ''}` : 'password';
+    deps.out(
+      `SSH: ${ssh.config.user}@${host}:${String(ssh.config.port)} by ${how}` +
+        (sshWhere ? `, secret stored in ${sshWhere}` : '')
+    );
+  }
   deps.out(`Settings written to ${path}`);
   deps.out('');
   deps.out('Add it to your agent. The plugin brings the skills along with the server:');
@@ -236,6 +332,23 @@ export async function runInitFromTerminal(): Promise<number> {
           };
         } catch (error) {
           return { ok: false, reason: (error as Error).message.slice(0, 120) };
+        }
+      },
+      verifySsh: async opts => {
+        try {
+          const result = await createSshClient(opts).exec('uname -sm; [ -d /opt/bin ] && echo entware', 10_000);
+          const text = result.stdout.trim().replace(/\s+/g, ' ');
+          if (!/entware/.test(text)) {
+            return {
+              ok: false,
+              reason:
+                `logged in, but this is not the Entware shell (got "${text.slice(0, 60)}"). ` +
+                'Port 22 is usually the KeeneticOS CLI; dropbear listens on 222.'
+            };
+          }
+          return { ok: true, detail: text.replace(/ ?entware$/, '') + ', Entware found' };
+        } catch (error) {
+          return { ok: false, reason: (error as Error).message.slice(0, 300) };
         }
       }
     });

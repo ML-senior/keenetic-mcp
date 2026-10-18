@@ -7,6 +7,22 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * The band of a radio. KeeneticOS 5.x does not put a `band` field on the
+ * WifiMaster record (measured on a KN-1810), so it is read from the channel
+ * the radio is on: 1-14 only exist at 2.4 GHz, 32 and up at 5 GHz. A `band`
+ * the firmware does report wins, and a 6 GHz radio - whose channel numbers
+ * overlap both - is only named when the firmware says so.
+ */
+export function bandOf(master: Record<string, unknown>, channel: number | null): string {
+  if (typeof master['band'] === 'string' && master['band'] !== '') return master['band'];
+  const traits = Array.isArray(master['traits']) ? master['traits'].map(String) : [];
+  if (traits.some(t => /6g/i.test(t))) return '6GHz';
+  if (channel === null || channel <= 0) return 'unknown';
+  if (channel <= 14) return '2.4GHz';
+  return '5GHz';
+}
+
 export function registerNetworkTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'get_internet_status',
@@ -143,9 +159,13 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
               };
             });
 
+          const channel = typeof master['channel'] === 'number' ? master['channel'] : null;
           return {
             radio: masterId,
-            band: typeof master['band'] === 'string' ? master['band'] : '',
+            band: bandOf(master, channel),
+            channel,
+            bandwidthMhz: master['bandwidth'] !== undefined ? Number(master['bandwidth']) : null,
+            temperatureC: typeof master['temperature'] === 'number' ? master['temperature'] : null,
             description: typeof master['description'] === 'string' ? master['description'] : '',
             accessPoints
           };

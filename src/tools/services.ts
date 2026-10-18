@@ -91,6 +91,50 @@ function shapeStaticRule(rule: Row): Row {
   };
 }
 
+interface HostInfo {
+  name: string | null;
+  ip: string | null;
+  active: boolean;
+}
+
+/**
+ * MAC -> who it is, from the hotspot table. Port forwarding and KeenDNS both
+ * point at MACs, which say nothing to a reader; one extra request turns
+ * a bare MAC into "laptop, 192.0.2.10, online".
+ * A failure here only loses the names, never the listing.
+ */
+async function hostDirectory(ctx: ToolContext): Promise<Map<string, HostInfo>> {
+  const directory = new Map<string, HostInfo>();
+  try {
+    const hotspot = asRecord(await ctx.client.rci.get('show/ip/hotspot'));
+    for (const host of asEntries(hotspot['host'])) {
+      if (typeof host['mac'] !== 'string') continue;
+      const name =
+        (typeof host['name'] === 'string' && host['name']) ||
+        (typeof host['hostname'] === 'string' && host['hostname']) ||
+        null;
+      directory.set(host['mac'].toLowerCase(), {
+        name,
+        ip: typeof host['ip'] === 'string' && host['ip'] !== '0.0.0.0' ? host['ip'] : null,
+        active: host['active'] === true
+      });
+    }
+  } catch {
+    // Names are a convenience.
+  }
+  return directory;
+}
+
+function describeTarget(directory: Map<string, HostInfo>, value: unknown): HostInfo | null {
+  if (typeof value !== 'string') return null;
+  const key = value.toLowerCase();
+  if (directory.has(key)) return directory.get(key) ?? null;
+  for (const info of directory.values()) {
+    if (info.ip === value) return info;
+  }
+  return MAC_RE.test(key) ? { name: null, ip: null, active: false } : null;
+}
+
 async function fetchStaticRules(ctx: ToolContext): Promise<Row[]> {
   return asEntries(await ctx.client.rci.get('ip/static'));
 }
@@ -108,7 +152,11 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
       annotations: READ_ONLY
     },
     guard(async () => {
-      const rules = (await fetchStaticRules(ctx)).map(shapeStaticRule);
+      const [raw, directory] = await Promise.all([fetchStaticRules(ctx), hostDirectory(ctx)]);
+      const rules = raw.map(rule => {
+        const shaped = shapeStaticRule(rule);
+        return { ...shaped, target: describeTarget(directory, shaped['toHost']) };
+      });
       return ok({ rules, total: rules.length });
     })
   );
@@ -124,20 +172,37 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
       annotations: READ_ONLY
     },
     guard(async () => {
-      const tree = asRecord(await ctx.client.rci.get('ip/http/proxy'));
+      const [treeRaw, directory] = await Promise.all([
+        ctx.client.rci.get('ip/http/proxy'),
+        hostDirectory(ctx)
+      ]);
+      const tree = asRecord(treeRaw);
       const mappings = Object.entries(tree).map(([name, value]) => {
         const entry = asRecord(value);
         const upstream = asRecord(entry['upstream']);
         return {
           name,
           upstream: upstream['upstream'] ?? null,
+          target: describeTarget(directory, upstream['upstream']),
           port: upstream['port'] ?? null,
           proto: upstream['proto'] ?? null,
           sslRedirect: asRecord(entry['ssl'])['redirect'] === true,
           securityLevel: Object.keys(asRecord(entry['security-level'])).join(',') || null
         };
       });
-      return ok({ mappings, total: mappings.length });
+      const open = mappings.filter(m => m.securityLevel === 'public').map(m => m.name);
+      return ok({
+        mappings,
+        total: mappings.length,
+        ...(open.length > 0
+          ? {
+              warning:
+                `${open.join(', ')}: security level "public" - reachable from the internet with no ` +
+                'router login in front. Fine only if the app has its own authentication; ' +
+                'otherwise use "private" (router account required).'
+            }
+          : {})
+      });
     })
   );
 

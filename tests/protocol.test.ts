@@ -32,7 +32,8 @@ const READ_TOOLS = [
   'list_policies',
   'list_routes',
   'list_segments',
-  'run_ping'
+  'run_ping',
+  'ssh_check'
 ];
 
 const WRITE_TOOLS = [
@@ -49,6 +50,7 @@ const WRITE_TOOLS = [
   'remove_dns_host',
   'set_dhcp_host',
   'remove_dhcp_host',
+  'delete_interface',
   'reboot_router'
 ];
 

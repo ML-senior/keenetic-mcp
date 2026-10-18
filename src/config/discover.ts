@@ -59,35 +59,76 @@ export function configDir(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): st
   return posix.join(env['XDG_CONFIG_HOME'] ?? posix.join(home, '.config'), 'keenetic-mcp');
 }
 
+export interface StoredSshConfig {
+  port: number;
+  user: string;
+  auth: 'password' | 'key';
+  /** Only for auth=key. The key stays where it is; only its path is recorded. */
+  keyPath?: string;
+}
+
 export interface StoredConfig {
   host: string;
   login: string;
+  /** Present only when shell access was enabled in `init`. */
+  ssh?: StoredSshConfig;
 }
 
 const FILE = 'config.json';
 
+function parseSsh(value: unknown): StoredSshConfig | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const port = typeof raw['port'] === 'number' ? raw['port'] : Number.NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  if (typeof raw['user'] !== 'string' || raw['user'] === '') return undefined;
+  const auth = raw['auth'] === 'key' ? 'key' : 'password';
+  const ssh: StoredSshConfig = { port, user: raw['user'], auth };
+  if (auth === 'key') {
+    if (typeof raw['keyPath'] !== 'string' || raw['keyPath'] === '') return undefined;
+    ssh.keyPath = raw['keyPath'];
+  }
+  return ssh;
+}
+
 export async function readStoredConfig(dir: string): Promise<StoredConfig | null> {
   try {
-    const parsed = JSON.parse(await readFile(join(dir, FILE), 'utf8')) as Partial<StoredConfig>;
-    if (typeof parsed.host !== 'string' || typeof parsed.login !== 'string') return null;
-    return { host: parsed.host, login: parsed.login };
+    const parsed = JSON.parse(await readFile(join(dir, FILE), 'utf8')) as Record<string, unknown>;
+    if (typeof parsed['host'] !== 'string' || typeof parsed['login'] !== 'string') return null;
+    const config: StoredConfig = { host: parsed['host'], login: parsed['login'] };
+    const ssh = parseSsh(parsed['ssh']);
+    if (ssh) config.ssh = ssh;
+    return config;
   } catch {
     return null;
   }
 }
 
+/** Keychain account names. One place, so init and the server never disagree. */
+export const secretAccounts = {
+  router: (login: string, host: string): string => `${login}@${host}`,
+  sshPassword: (user: string, host: string): string => `ssh:${user}@${host}`,
+  sshPassphrase: (user: string, host: string): string => `ssh-key:${user}@${host}`
+};
+
 /**
- * JSON rather than TOML: Node has no built-in parser and three fields do not
- * justify a dependency. The password is never written here; it lives in the
- * keychain, keyed by `login@host`.
+ * JSON rather than TOML: Node has no built-in parser and a handful of fields do
+ * not justify a dependency. No secret is ever written here; passwords and key
+ * passphrases live in the keychain, keyed by `secretAccounts`.
  */
 export async function writeStoredConfig(dir: string, config: StoredConfig): Promise<string> {
   await mkdir(dir, { recursive: true });
   const path = join(dir, FILE);
-  await writeFile(
-    path,
-    `${JSON.stringify({ host: config.host, login: config.login }, null, 2)}\n`,
-    'utf8'
-  );
+  const out: Record<string, unknown> = { host: config.host, login: config.login };
+  if (config.ssh) {
+    const ssh: Record<string, unknown> = {
+      port: config.ssh.port,
+      user: config.ssh.user,
+      auth: config.ssh.auth
+    };
+    if (config.ssh.auth === 'key') ssh['keyPath'] = config.ssh.keyPath;
+    out['ssh'] = ssh;
+  }
+  await writeFile(path, `${JSON.stringify(out, null, 2)}\n`, 'utf8');
   return path;
 }

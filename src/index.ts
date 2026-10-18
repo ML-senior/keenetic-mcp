@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { runInitFromTerminal } from './cli/init.js';
-import { configDir, readStoredConfig } from './config/discover.js';
+import { configDir, readStoredConfig, secretAccounts } from './config/discover.js';
 import { loadConfig, type StoredCredentials } from './config/load.js';
 import { createSecretStore, spawnRunner } from './config/secrets.js';
 import { createBackupGuard } from './router/backup.js';
@@ -66,8 +66,20 @@ async function main(): Promise<void> {
   if (storedConfig) {
     stored.host = storedConfig.host;
     stored.login = storedConfig.login;
-    const secret = await store.read(`${storedConfig.login}@${storedConfig.host}`);
+    const secret = await store.read(secretAccounts.router(storedConfig.login, storedConfig.host));
     if (secret !== null) stored.password = secret;
+    if (storedConfig.ssh) {
+      const { port, user, auth, keyPath } = storedConfig.ssh;
+      stored.ssh = { port, user };
+      if (auth === 'key' && keyPath) {
+        stored.ssh.keyPath = keyPath;
+        const passphrase = await store.read(secretAccounts.sshPassphrase(user, storedConfig.host));
+        if (passphrase !== null) stored.ssh.passphrase = passphrase;
+      } else {
+        const sshPassword = await store.read(secretAccounts.sshPassword(user, storedConfig.host));
+        if (sshPassword !== null) stored.ssh.password = sshPassword;
+      }
+    }
   }
 
   const config = await loadConfig(process.argv.slice(2), process.env, stored);
@@ -76,21 +88,23 @@ async function main(): Promise<void> {
     login: config.login,
     password: config.password
   });
+  // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
+  const bareHost = config.host.replace(/^https?:\/\//, '').split(':')[0]!;
   const ctx: ToolContext = {
     client,
+    routerHost: bareHost,
     maxResponseBytes: config.maxResponseBytes,
     readOnly: config.readOnly,
     backup: createBackupGuard(client.rci, config.host, () => new Date())
   };
   // Read-only wins over --ssh: a shell cannot be made read-only by filtering.
   if (config.ssh && !config.readOnly) {
-    ctx.ssh = createSshClient({
-      // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
-      host: config.host.replace(/^https?:\/\//, '').split(':')[0]!,
+    ctx.ssh = createSshClient({ host: bareHost, ...config.ssh });
+    ctx.sshTarget = {
       port: config.ssh.port,
       user: config.ssh.user,
-      password: config.ssh.password
-    });
+      auth: config.ssh.privateKey ? 'key' : 'password'
+    };
   }
 
   await createServer(ctx).connect(new StdioServerTransport());

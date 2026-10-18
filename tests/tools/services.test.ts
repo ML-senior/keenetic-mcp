@@ -153,12 +153,25 @@ describe('read tools', () => {
     expect(out.rules[1].disabled).toBe(true);
   });
 
+  it('get_port_forwarding names the host behind each MAC', async () => {
+    const out = payload(await harness().handlers['get_port_forwarding']!({}));
+    const known = out.rules.find((r: { toHost: string }) => r.toHost === '02:00:00:00:00:10');
+    if (known) expect(known.target).toMatchObject({ name: 'server-1', ip: '192.0.2.10' });
+    expect(out.rules.every((r: { target: unknown }) => 'target' in r)).toBe(true);
+  });
+
+  it('get_keendns_mappings warns about public mappings', async () => {
+    const out = payload(await harness().handlers['get_keendns_mappings']!({}));
+    expect(out.warning).toMatch(/homeassistant.*public/);
+  });
+
   it('get_keendns_mappings flattens the proxy tree', async () => {
     const out = payload(await harness().handlers['get_keendns_mappings']!({}));
     expect(out.mappings).toEqual([
       {
         name: 'homeassistant',
         upstream: '192.0.2.10',
+        target: { name: 'server-1', ip: '192.0.2.10', active: false },
         port: '8123',
         proto: 'http',
         sslRedirect: true,
