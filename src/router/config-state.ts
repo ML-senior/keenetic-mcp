@@ -40,6 +40,11 @@ export interface ConfigState {
   savedChecksum: string | null;
   /** The `Last change` stamped into startup-config.txt when it was saved. */
   savedLastChangeAt: string | null;
+  /**
+   * How the answer was reached. `content` means the stamps disagreed and the
+   * two configurations were compared line by line, which is authoritative.
+   */
+  basis: 'stamps' | 'content';
   /** null when the saved state could not be read - never a guess. */
   unsavedChanges: boolean | null;
   failSafe: { unsaved: boolean; rollbackPending: boolean; secondsLeft: unknown };
@@ -70,6 +75,29 @@ export function lastChangeMoved(before: LastChange, after: LastChange): boolean 
   return before.checksum !== after.checksum || before.date !== after.date;
 }
 
+/** The configuration without its `! $$$` header and trailing blank lines. */
+export function configBody(text: string): string {
+  return text
+    .replace(/\r/g, '')
+    .split('\n')
+    .filter(line => !/^!\s*\$+/.test(line))
+    .map(line => line.replace(/\s+$/, ''))
+    .join('\n')
+    .trim();
+}
+
+/** `show running-config` as text, or null if it could not be read. */
+export async function readRunningConfig(rci: Rci): Promise<string | null> {
+  try {
+    const raw = (await rci.post({ show: { 'running-config': {} } })) as Record<string, unknown>;
+    const show = (raw?.['show'] ?? {}) as Record<string, unknown>;
+    const message = ((show['running-config'] ?? {}) as Record<string, unknown>)['message'];
+    return Array.isArray(message) ? message.map(String).join('\n') : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether the running configuration still differs from the one in flash.
  *
@@ -90,8 +118,10 @@ export async function readConfigState(rci: Rci): Promise<ConfigState> {
 
   let savedChecksum: string | null = null;
   let savedLastChange: string | null = null;
+  let startupText: string | null = null;
   try {
     const text = await rci.getText(STARTUP_CONFIG);
+    startupText = text;
     savedChecksum = SAVED_CHECKSUM.exec(text)?.[1] ?? null;
     savedLastChange = SAVED_LAST_CHANGE.exec(text)?.[1] ?? null;
   } catch {
@@ -112,6 +142,21 @@ export async function readConfigState(rci: Rci): Promise<ConfigState> {
   // keep it rather than claiming not to know.
   else unsavedChanges = false;
 
+  // The stamps over-report. The checksum covers the header too, so a cloud or
+  // mobile-app session that touches nothing still moves `Last change` and the
+  // checksum - and a save then changes nothing on flash, because the router
+  // does not rewrite an identical body. Measured on 5.2: "configuration saved"
+  // in the log, startup-config.txt untouched, stamps still disagreeing.
+  // When they say "unsaved", compare the configurations themselves.
+  let basis: ConfigState['basis'] = 'stamps';
+  if (unsavedChanges === true && startupText !== null) {
+    const running = await readRunningConfig(rci);
+    if (running !== null) {
+      basis = 'content';
+      unsavedChanges = configBody(running) !== configBody(startupText);
+    }
+  }
+
   return {
     lastChangedAt: last.date,
     lastChangedBy: last.user,
@@ -120,6 +165,7 @@ export async function readConfigState(rci: Rci): Promise<ConfigState> {
     savedChecksum,
     savedLastChangeAt: savedLastChange,
     unsavedChanges,
+    basis,
     failSafe: last.failSafe
   };
 }

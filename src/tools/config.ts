@@ -27,13 +27,21 @@ async function waitForSaved(
   ctx: ToolContext,
   before: LastChange,
   attempts = 5,
-  delayMs = 400
+  delayMs = 400,
+  confirmAttempts = 6,
+  confirmDelayMs = 1000
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (lastChangeMoved(before, await readLastChange(ctx.client.rci))) break;
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
-  return (await readConfigState(ctx.client.rci)).unsavedChanges === false;
+  // The log shows ~4 s between "saving" and "configuration saved" on a
+  // KN-1810, so one immediate read of the file catches the old one.
+  for (let attempt = 0; attempt < confirmAttempts; attempt += 1) {
+    if ((await readConfigState(ctx.client.rci)).unsavedChanges === false) return true;
+    if (attempt < confirmAttempts - 1) await new Promise(resolve => setTimeout(resolve, confirmDelayMs));
+  }
+  return false;
 }
 
 export function registerConfigTools(server: McpServer, ctx: ToolContext): void {

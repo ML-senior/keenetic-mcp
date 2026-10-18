@@ -102,11 +102,15 @@ describe('save_config', () => {
     expect(get.mock.calls.length).toBeGreaterThan(1);
   });
 
-  it('reads it once on the failing path too', async () => {
+  // The flash write takes ~4 s on a KN-1810, so the failing path re-reads the
+  // file for a few seconds before giving up - a bounded number of times.
+  it('gives up after a bounded number of reads on the failing path', async () => {
     const { handlers, getText } = harness({ unsavedAfter: true });
-    await handlers['save_config']!({});
-    expect(getText).toHaveBeenCalledTimes(1);
-  }, 10_000);
+    const result = await handlers['save_config']!({});
+    expect(result.isError).toBe(true);
+    expect(getText.mock.calls.length).toBeGreaterThan(1);
+    expect(getText.mock.calls.length).toBeLessThanOrEqual(6);
+  }, 15_000);
 
   it('is not registered in read-only mode', () => {
     const { handlers } = harness({ readOnly: true });
