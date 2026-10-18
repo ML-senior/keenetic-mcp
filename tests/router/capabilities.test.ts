@@ -77,6 +77,6 @@ describe('loadConfig', () => {
   it('points at the wizard when the password is absent', async () => {
     await expect(
       loadConfig([], { KEENETIC_HOST: '192.0.2.1' } as NodeJS.ProcessEnv)
-    ).rejects.toThrow(/keenetic-mcp init/);
+    ).rejects.toThrow(/dist\/index\.js init/);
   });
 });

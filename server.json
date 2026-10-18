@@ -18,7 +18,7 @@
       "environmentVariables": [
         {
           "name": "KEENETIC_HOST",
-          "description": "Router address on the LAN, for example 192.168.1.1. Optional: `npx keenetic-mcp init` discovers it from the default gateway and stores it.",
+          "description": "Router address on the LAN, for example 192.168.1.1. Optional: `node dist/index.js init` discovers it from the default gateway and stores it.",
           "isRequired": false,
           "isSecret": false,
           "format": "string"

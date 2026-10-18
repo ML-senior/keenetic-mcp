@@ -52,7 +52,7 @@ export async function loadConfig(
 
   if (!host || !password) {
     throw new Error(
-      'No router configured. Run "npx keenetic-mcp init" to set one up, or set ' +
+      'No router configured. Run "node dist/index.js init" to set one up, or set ' +
         'KEENETIC_HOST and KEENETIC_PASSWORD in the environment.'
     );
   }

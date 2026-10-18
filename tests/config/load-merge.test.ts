@@ -44,14 +44,14 @@ describe('loadConfig precedence', () => {
 
   it('points at the wizard when nothing is configured', async () => {
     await expect(loadConfig([], {} as NodeJS.ProcessEnv, undefined)).rejects.toThrow(
-      /keenetic-mcp init/
+      /dist\/index\.js init/
     );
   });
 
   it('points at the wizard when the host is known but the password is not', async () => {
     await expect(
       loadConfig([], {} as NodeJS.ProcessEnv, { host: '192.0.2.1', login: 'admin' })
-    ).rejects.toThrow(/keenetic-mcp init/);
+    ).rejects.toThrow(/dist\/index\.js init/);
   });
 
   it('defaults the login to admin', async () => {

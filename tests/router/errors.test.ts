@@ -5,7 +5,7 @@ describe('error taxonomy', () => {
   it('every error carries guidance a model can act on', () => {
     const err = new AuthError('the router rejected credentials for user "admin"');
     expect(err).toBeInstanceOf(KeeneticError);
-    expect(err.guidance).toContain('keenetic-mcp init');
+    expect(err.guidance).toContain('dist/index.js init');
   });
 
   it('formats a full message combining cause and guidance', () => {

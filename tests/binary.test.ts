@@ -144,6 +144,6 @@ describe('the built binary', () => {
 
     const result = await run(DIST, '', bare);
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('keenetic-mcp init');
+    expect(result.stderr).toContain('dist/index.js init');
   });
 });

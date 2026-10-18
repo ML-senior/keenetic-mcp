@@ -16,7 +16,7 @@ export abstract class KeeneticError extends Error {
 
 export class AuthError extends KeeneticError {
   readonly guidance =
-    'The server cannot fix this itself - ask the user to run: npx keenetic-mcp init';
+    'The server cannot fix this itself - ask the user to run: node dist/index.js init';
 
   constructor(cause: string) {
     super(cause);
