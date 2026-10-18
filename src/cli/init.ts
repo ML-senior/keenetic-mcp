@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import {
   configDir,
   gatewayCommand,
@@ -77,8 +78,13 @@ export async function runInit(deps: InitDeps): Promise<number> {
   deps.out('  Codex         codex plugin marketplace add ML-senior/keenetic-mcp');
   deps.out('                codex plugin add keenetic@keenetic');
   deps.out('');
-  deps.out('  Anything else {"command": "npx", "args": ["-y", "keenetic-mcp"]}');
+  deps.out('  Anything else {"command": "node", "args": ["' + entryPoint() + '"]}');
   return 0;
+}
+
+/** The built server entry, for the generic-MCP-client hint printed by init. */
+function entryPoint(): string {
+  return fileURLToPath(new URL('../index.js', import.meta.url));
 }
 
 async function readGateway(): Promise<string | null> {

@@ -57,8 +57,9 @@ describe('runInit', () => {
     expect(text).toMatch(/Claude Code/);
     expect(text).toMatch(/Codex/);
     expect(text).toMatch(/plugin marketplace add ML-senior\/keenetic-mcp/);
-    expect(text).toMatch(/"command": "npx"/);
-    expect(text).toMatch(/"keenetic-mcp"/);
+    expect(text).toMatch(/"command": "node"/);
+    // In the built package this is dist/index.js; under vitest it is src/index.ts.
+    expect(text).toMatch(/index\.(js|ts)/);
   });
 
   it('fails with a usable message when nothing answers at the gateway', async () => {
