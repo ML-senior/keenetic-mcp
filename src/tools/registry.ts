@@ -1,6 +1,7 @@
 import { KeeneticError } from '../router/errors.js';
 import type { BackupGuard } from '../router/backup.js';
 import type { KeeneticClient } from '../router/client.js';
+import type { SshClient } from '../ssh/client.js';
 import { capText } from '../shape/budget.js';
 
 export interface ToolContext {
@@ -9,6 +10,8 @@ export interface ToolContext {
   readOnly: boolean;
   /** Snapshots the startup config once, before the first mutating call. */
   backup: BackupGuard;
+  /** Shell access; absent unless the server was started with --ssh. */
+  ssh?: SshClient;
 }
 
 /**

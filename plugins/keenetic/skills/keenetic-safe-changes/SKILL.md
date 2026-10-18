@@ -79,3 +79,20 @@ point is fine; disabling `Bridge0` on a home router is not.
 
 If something looks wrong at step 3, the change is still unsaved: the user can
 reboot the router and everything returns to the last saved state.
+
+## Shell access is a different risk class
+
+If the server was started with `--ssh`, the `ssh_exec` / `ssh_write_file` /
+`opkg_manage` tools bypass every protection described above: there is no
+unsaved-changes window for a file written to /opt, and no automatic backup
+beyond the per-file `.bak` that `ssh_write_file` makes. Treat them accordingly:
+
+- Prefer the curated `set_*` tools for anything they cover. SSH is for what
+  they do not: Entware packages and their configs.
+- Before `opkg_manage install` or `remove`, run `get_opkg_status` and
+  `get_media` - an unmounted /opt turns every opkg action into a mess.
+- After changing a service config, restart the service
+  (`ssh_exec { "command": "/opt/etc/init.d/S99name restart" }`) and then
+  verify with its log or status, not just by the write succeeding.
+- `reboot` from the shell is refused on purpose: `reboot_router` checks for
+  unsaved router changes first.

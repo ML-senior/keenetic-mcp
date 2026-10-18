@@ -1,9 +1,17 @@
+export interface SshConfig {
+  port: number;
+  user: string;
+  password: string;
+}
+
 export interface AppConfig {
   host: string;
   login: string;
   password: string;
   readOnly: boolean;
   maxResponseBytes: number;
+  /** Present only when shell access was explicitly enabled. */
+  ssh: SshConfig | null;
 }
 
 export interface StoredCredentials {
@@ -49,11 +57,30 @@ export async function loadConfig(
     );
   }
 
+  // Shell access is opt-in: an agent with an arbitrary command runner is a
+  // different risk class than one with curated tools, so the default is off.
+  const sshEnabled =
+    argv.includes('--ssh') || ['1', 'true', 'yes'].includes(env['KEENETIC_SSH'] ?? '');
+  let ssh: SshConfig | null = null;
+  if (sshEnabled) {
+    const rawPort = env['KEENETIC_SSH_PORT'] ?? flagValue(argv, '--ssh-port') ?? '22';
+    const port = Number.parseInt(rawPort, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`SSH port must be 1-65535, got "${rawPort}"`);
+    }
+    ssh = {
+      port,
+      user: env['KEENETIC_SSH_USER'] ?? login,
+      password: env['KEENETIC_SSH_PASSWORD'] ?? password
+    };
+  }
+
   return {
     host,
     login,
     password,
     readOnly: argv.includes('--read-only'),
-    maxResponseBytes: parsedMax
+    maxResponseBytes: parsedMax,
+    ssh
   };
 }

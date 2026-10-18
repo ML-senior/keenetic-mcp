@@ -9,6 +9,7 @@ import { loadConfig, type StoredCredentials } from './config/load.js';
 import { createSecretStore, spawnRunner } from './config/secrets.js';
 import { createBackupGuard } from './router/backup.js';
 import { createClient } from './router/client.js';
+import { createSshClient } from './ssh/client.js';
 import { registerConfigTools } from './tools/config.js';
 import { registerDeviceTools } from './tools/devices.js';
 import { registerDiagnosticsTools } from './tools/diagnostics.js';
@@ -18,6 +19,7 @@ import { registerRawTool } from './tools/raw.js';
 import type { ToolContext } from './tools/registry.js';
 import { registerSegmentTools } from './tools/segments.js';
 import { registerServiceTools } from './tools/services.js';
+import { registerSshTools } from './tools/ssh.js';
 import { registerSystemTools } from './tools/system.js';
 import { loadLocalEnv, resolveVersion } from './version.js';
 
@@ -31,6 +33,7 @@ export function createServer(ctx: ToolContext): McpServer {
   registerConfigTools(server, ctx);
   registerServiceTools(server, ctx);
   registerDiagnosticsTools(server, ctx);
+  registerSshTools(server, ctx);
   registerRawTool(server, ctx);
   return server;
 }
@@ -79,6 +82,16 @@ async function main(): Promise<void> {
     readOnly: config.readOnly,
     backup: createBackupGuard(client.rci, config.host, () => new Date())
   };
+  // Read-only wins over --ssh: a shell cannot be made read-only by filtering.
+  if (config.ssh && !config.readOnly) {
+    ctx.ssh = createSshClient({
+      // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
+      host: config.host.replace(/^https?:\/\//, '').split(':')[0]!,
+      port: config.ssh.port,
+      user: config.ssh.user,
+      password: config.ssh.password
+    });
+  }
 
   await createServer(ctx).connect(new StdioServerTransport());
 }

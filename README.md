@@ -145,6 +145,24 @@ Prefer environment variables? `KEENETIC_HOST`, `KEENETIC_USER` and
 |---|---|
 | `rci_call` | any router API path at all, for whatever the tools above do not cover |
 
+**Shell access (opt-in)**
+
+Disabled unless the server is started with `--ssh` (or `KEENETIC_SSH=1`), and
+never registered in read-only mode. SSH defaults to the router host, port 22
+and the router credentials; override with `KEENETIC_SSH_PORT`,
+`KEENETIC_SSH_USER`, `KEENETIC_SSH_PASSWORD` (for Entware's dropbear on port
+222 with its own root password, for example).
+
+| Tool | |
+|---|---|
+| `ssh_exec` | run a shell command, get stdout, stderr and the exit code |
+| `ssh_read_file` | read a file, e.g. an Entware config under /opt/etc |
+| `ssh_write_file` | write under /opt/ or /tmp/ only; backs up the old file and verifies the md5 afterwards |
+| `opkg_manage` | install, remove, list and update Entware packages |
+
+Flash writes, `rm -rf` of system paths, `reboot`/`passwd` from the shell are
+refused outright.
+
 ## Skills included
 
 The plugin ships four skills, so the agent knows how your router behaves rather
