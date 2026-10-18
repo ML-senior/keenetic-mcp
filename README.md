@@ -334,10 +334,15 @@ The SSH tools work with any Keenetic that has the SSH server component enabled;
 ## 🔬 How it works
 
 Keenetic routers expose RCI, a JSON mirror of their command-line tree, over
-HTTP. This server authenticates with the router's challenge-response scheme,
-keeps one session alive across the agent's questions, and shapes the answers so
-they fit in a model's context: the raw interface listing alone is 32 KB, and the
-NAT table is over 100 KB.
+HTTP. This server speaks both of the router's authentication schemes: the
+classic challenge-response (NDW2) and the three-phase NDW4 handshake introduced
+in KeeneticOS 5.x — Argon2id key derivation with SCRAM-style mutual proofs,
+where client and server each prove they know the password before a session is
+opened. The scheme is picked from the router's `WWW-Authenticate` header,
+exactly the way the web panel picks it, so the same build works against 4.x
+and 5.x firmware. One session is kept alive across the agent's questions, and
+the answers are shaped so they fit in a model's context: the raw interface
+listing alone is 32 KB, and the NAT table is over 100 KB.
 
 Shell access runs over a fresh SSH connection per command — a stateless connect
 sidesteps every flavour of stale-session bug a long-lived dropbear connection
