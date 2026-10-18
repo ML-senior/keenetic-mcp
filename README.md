@@ -112,6 +112,17 @@ Prefer environment variables? `KEENETIC_HOST`, `KEENETIC_USER` and
 | `get_config_state` | unsaved changes, who changed what and when |
 | `list_segments` | every bridge, and whether the web interface lists it as a segment |
 | `backup_config` | download the configuration to a local file |
+| `get_port_forwarding` | static NAT / port forwarding rules |
+| `get_keendns_mappings` | KeenDNS web-app mappings and their upstreams |
+| `get_dns_records` | static DNS records the router itself serves |
+| `get_dhcp_static` | fixed MAC-to-IP reservations |
+| `get_firewall_rules` | access-lists and firewall settings, parsed from the running config |
+| `get_log` | system log, with line count and text filter |
+| `get_mesh_nodes` | Mesh controller and extenders, with per-node client counts |
+| `get_media` | USB/flash partitions, free space, what uses them |
+| `get_opkg_status` | Entware binding: which drive, which init script |
+| `get_ping_check` | router-side reachability probes for its internet links |
+| `run_ping` | pings a host from the machine running this server |
 
 **Change**
 
@@ -121,6 +132,11 @@ Prefer environment variables? `KEENETIC_HOST`, `KEENETIC_USER` and
 | `set_interface_state` | bring an interface up or down |
 | `create_segment` | a guest or IoT network the web interface actually lists, with Wi-Fi, DHCP and optional VPN routing |
 | `delete_segment` | remove a segment and everything created with it |
+| `set_port_forwarding` / `remove_port_forwarding` | forward an external port to a device, addressed by MAC |
+| `set_keendns_mapping` / `remove_keendns_mapping` | publish or withdraw a KeenDNS web-app mapping |
+| `set_dns_host` / `remove_dns_host` | static DNS records served by the router |
+| `set_dhcp_host` / `remove_dhcp_host` | fixed MAC-to-IP reservations |
+| `reboot_router` | reboot, only with confirm=true; reports whether unsaved changes were lost |
 | `save_config` | make pending changes survive a reboot |
 
 **Escape hatch**

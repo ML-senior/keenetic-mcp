@@ -95,7 +95,14 @@ Confirmed on KeeneticOS 5.1. Smaller firmware has fewer of them; call
 | `show/ip/policy`, `ip/policy` | connection policies |
 | `ip/hotspot/host` | per-device access and policy configuration |
 | `known/host` | device registration and names |
-| `ip/static` | port forwarding |
+| `ip/static` | port forwarding (`get_port_forwarding` covers it) |
+| `ip/http/proxy` | KeenDNS web-app mappings (`get_keendns_mappings` covers it) |
+| `ip/host` | static DNS records (`get_dns_records` covers it) |
+| `ip/dhcp/host` | fixed MAC-to-IP reservations (`get_dhcp_static` covers it) |
+| `show/media` | attached storage (`get_media` covers it) |
+| `show/ping-check` | router-side reachability probes (`get_ping_check` covers it) |
+| `opkg` | Entware binding (`get_opkg_status` covers it) |
+| `/ci/log` | system log, plain text, outside the JSON tree (`get_log` covers it) |
 
 ## Responses that will blow up your context
 
@@ -139,4 +146,14 @@ The `get_interface` tool already does this.
 
 Read [keenetic-safe-changes](../keenetic-safe-changes/SKILL.md). Writes through
 `rci_call` skip the verification and the automatic backup that the curated tools
-provide, so prefer `update_device` and `set_interface_state` whenever they fit.
+provide, so prefer `update_device`, `set_interface_state` and the `set_*` /
+`remove_*` service tools whenever they fit.
+
+Two write shapes the service tools use that are worth knowing by hand:
+
+- **Port forwarding targets a MAC, never an IP**:
+  `{"ip":{"static":{"interface":"GigabitEthernet1","protocol":"tcp","port":"8123","to-host":"aa:bb:cc:dd:ee:ff","disable":{"no":true}}}}`.
+  `disable` is a per-rule attribute; the `{"no": true}` form clears it.
+- **Deleting a config object needs its full identity plus `"no": true`**:
+  `{"ip":{"host":{"domain":"nas.lan","address":"192.0.2.5","no":true}}}` -
+  for `ip host` the address is part of the identity, not an option.

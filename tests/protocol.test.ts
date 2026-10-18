@@ -13,15 +13,26 @@ const READ_TOOLS = [
   'rci_call',
   'get_config_state',
   'get_device',
+  'get_dhcp_static',
+  'get_dns_records',
+  'get_firewall_rules',
   'get_interface',
   'get_internet_status',
+  'get_keendns_mappings',
+  'get_log',
+  'get_media',
+  'get_mesh_nodes',
+  'get_opkg_status',
+  'get_ping_check',
+  'get_port_forwarding',
   'get_system_info',
   'get_wifi_status',
   'list_devices',
   'list_interfaces',
   'list_policies',
   'list_routes',
-  'list_segments'
+  'list_segments',
+  'run_ping'
 ];
 
 const WRITE_TOOLS = [
@@ -29,8 +40,21 @@ const WRITE_TOOLS = [
   'set_interface_state',
   'save_config',
   'create_segment',
-  'delete_segment'
+  'delete_segment',
+  'set_port_forwarding',
+  'remove_port_forwarding',
+  'set_keendns_mapping',
+  'remove_keendns_mapping',
+  'set_dns_host',
+  'remove_dns_host',
+  'set_dhcp_host',
+  'remove_dhcp_host',
+  'reboot_router'
 ];
+
+// set_dns_host only ever adds a record and refuses a conflicting name, so it
+// is annotated writing-but-not-destructive rather than destructive.
+const NON_DESTRUCTIVE_WRITES = ['set_dns_host'];
 
 function context(readOnly: boolean): ToolContext {
   const client = {
@@ -135,7 +159,9 @@ describe('write mode', () => {
     for (const name of WRITE_TOOLS) {
       const tool = tools.find(t => t.name === name);
       expect(tool?.annotations?.readOnlyHint, `${name} must not be read-only`).toBe(false);
-      expect(tool?.annotations?.destructiveHint, `${name} must be destructive`).toBe(true);
+      if (!NON_DESTRUCTIVE_WRITES.includes(name)) {
+        expect(tool?.annotations?.destructiveHint, `${name} must be destructive`).toBe(true);
+      }
     }
   });
 });

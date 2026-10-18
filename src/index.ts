@@ -11,11 +11,13 @@ import { createBackupGuard } from './router/backup.js';
 import { createClient } from './router/client.js';
 import { registerConfigTools } from './tools/config.js';
 import { registerDeviceTools } from './tools/devices.js';
+import { registerDiagnosticsTools } from './tools/diagnostics.js';
 import { registerInterfaceTools } from './tools/interfaces.js';
 import { registerNetworkTools } from './tools/network.js';
 import { registerRawTool } from './tools/raw.js';
 import type { ToolContext } from './tools/registry.js';
 import { registerSegmentTools } from './tools/segments.js';
+import { registerServiceTools } from './tools/services.js';
 import { registerSystemTools } from './tools/system.js';
 import { loadLocalEnv, resolveVersion } from './version.js';
 
@@ -27,6 +29,8 @@ export function createServer(ctx: ToolContext): McpServer {
   registerNetworkTools(server, ctx);
   registerSegmentTools(server, ctx);
   registerConfigTools(server, ctx);
+  registerServiceTools(server, ctx);
+  registerDiagnosticsTools(server, ctx);
   registerRawTool(server, ctx);
   return server;
 }
