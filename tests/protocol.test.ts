@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
+import { parseToolSelection, TOOL_PROFILES } from '../src/tools/selection.js';
 import { createServer } from '../src/index.js';
 import type { ToolContext } from '../src/tools/registry.js';
 import type { KeeneticClient } from '../src/router/client.js';
@@ -73,15 +74,46 @@ function context(readOnly: boolean): ToolContext {
 }
 
 /** Speaks real MCP to the assembled server over a linked in-memory transport. */
-async function connectedClient(readOnly = false): Promise<Client> {
+async function connectedClient(readOnly = false, tools?: string): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createServer(context(readOnly));
+  const server = createServer(context(readOnly), parseToolSelection(tools));
   await server.connect(serverTransport);
 
   const client = new Client({ name: 'protocol-test', version: '0.0.0' });
   await client.connect(clientTransport);
   return client;
 }
+
+describe('tool selection', () => {
+  it('advertises exactly the core profile with --tools core', async () => {
+    const client = await connectedClient(false, 'core');
+    const { tools } = await client.listTools();
+    expect(tools.map(t => t.name).sort()).toEqual([...TOOL_PROFILES['core']!].sort());
+  });
+
+  it('combines a profile with a glob', async () => {
+    const client = await connectedClient(false, 'core,list_*');
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).toContain('list_routes');
+    expect(names).toContain('set_port_forwarding');
+    expect(names).not.toContain('create_segment');
+  });
+
+  it('still answers calls to the tools it keeps', async () => {
+    const client = await connectedClient(false, 'get_system_info');
+    const { tools } = await client.listTools();
+    expect(tools.map(t => t.name)).toEqual(['get_system_info']);
+    const result = await client.callTool({ name: 'get_system_info', arguments: {} });
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('read-only still wins over a selection that names write tools', async () => {
+    const client = await connectedClient(true, 'core');
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).not.toContain('set_port_forwarding');
+    expect(names).toContain('get_port_forwarding');
+  });
+});
 
 describe('assembled server over MCP', () => {
   it('advertises every read tool', async () => {

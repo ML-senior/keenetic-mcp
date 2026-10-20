@@ -159,6 +159,8 @@ stored config** (written by `init`).
 | `KEENETIC_USER` | — | `admin` | Router login |
 | `KEENETIC_PASSWORD` | — | *(keychain)* | Router password |
 | — | `--read-only` | off | Never register the write tools |
+| `KEENETIC_TOOLS` | `--tools` | `all` | Which tools to advertise: `core`, `read`, `shell`, tool names or globs, comma-separated (see below) |
+| `KEENETIC_HOST` with a port | — | — | Web UI moved off 80? Put the port in the host: `192.168.1.1:8080`. SSH uses its own port either way |
 | — | `--max-response-bytes` | `25000` | Cap on any tool response |
 | `KEENETIC_SSH` | `--ssh` | **off** (on if set up in `init`) | Enable the SSH/Entware tools; `0` turns a stored setup off |
 | `KEENETIC_SSH_PORT` | `--ssh-port` | `222` | Entware dropbear port. `22` is the KeeneticOS CLI, which is not a shell |
@@ -170,6 +172,29 @@ stored config** (written by `init`).
 
 Environment variables are what you want in a container. The wizard reads
 passwords from the terminal; nothing ever lands in a log or a tool response.
+
+---
+
+## 🪶 Fewer tools, fewer tokens
+
+Every request an agent makes carries the description of every tool it can
+see. All 44 cost about **8k tokens per request**; most agents need a fraction:
+
+| `--tools` | Tools | ≈ tokens | For |
+|---|---|---|---|
+| `all` (default) | 44 | 7 900 | interactive work with everything at hand |
+| `core` | 15 | 2 700 | devices, Wi-Fi, port forwarding, KeenDNS, save, log |
+| `read` | 24 | 3 500 | monitoring and diagnostics; nothing can change |
+| `shell` | 9 | 1 600 | Entware work over SSH (needs SSH enabled) |
+
+Mix them: `--tools core,ssh_check,list_*`. `--read-only` still wins, so
+`--tools core --read-only` gives the core read tools only. A bot that only
+reports status is best served by `--tools read`.
+
+```json
+{ "command": "node", "args": ["/path/to/keenetic-mcp/dist/index.js", "--tools", "core"],
+  "env": { "KEENETIC_HOST": "192.168.1.1:8080", "KEENETIC_PASSWORD": "…" } }
+```
 
 ---
 

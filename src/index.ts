@@ -21,10 +21,12 @@ import { registerSegmentTools } from './tools/segments.js';
 import { registerServiceTools } from './tools/services.js';
 import { registerSshTools } from './tools/ssh.js';
 import { registerSystemTools } from './tools/system.js';
+import { parseToolSelection, selectingServer } from './tools/selection.js';
 import { loadLocalEnv, resolveVersion } from './version.js';
 
-export function createServer(ctx: ToolContext): McpServer {
-  const server = new McpServer({ name: 'keenetic', version: resolveVersion() });
+export function createServer(ctx: ToolContext, allow: ((name: string) => boolean) | null = null): McpServer {
+  const real = new McpServer({ name: 'keenetic', version: resolveVersion() });
+  const server = allow ? selectingServer(real, allow) : real;
   registerSystemTools(server, ctx);
   registerDeviceTools(server, ctx);
   registerInterfaceTools(server, ctx);
@@ -35,7 +37,7 @@ export function createServer(ctx: ToolContext): McpServer {
   registerDiagnosticsTools(server, ctx);
   registerSshTools(server, ctx);
   registerRawTool(server, ctx);
-  return server;
+  return real;
 }
 
 async function main(): Promise<void> {
@@ -107,7 +109,12 @@ async function main(): Promise<void> {
     };
   }
 
-  await createServer(ctx).connect(new StdioServerTransport());
+  const argv = process.argv.slice(2);
+  const toolsFlag = argv.indexOf('--tools');
+  const selection = parseToolSelection(
+    process.env['KEENETIC_TOOLS'] ?? (toolsFlag === -1 ? undefined : argv[toolsFlag + 1])
+  );
+  await createServer(ctx, selection).connect(new StdioServerTransport());
 }
 
 /**
