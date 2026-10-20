@@ -221,6 +221,19 @@ describe('set_port_forwarding', () => {
     expect(sent.ip.static.disable).toEqual({ no: true });
   });
 
+  // On a PPPoE line the internet is PPPoE0; a rule on GigabitEthernet1 is
+  // accepted and never matches.
+  it('listens on the default-route interface when none is named', async () => {
+    const h = harness();
+    h.data['show/interface'] = {
+      GigabitEthernet1: { type: 'GigabitEthernet', defaultgw: false },
+      PPPoE0: { type: 'PPPoE', defaultgw: true }
+    };
+    await h.handlers['set_port_forwarding']!({ to_host: '192.0.2.10', port: 9001 });
+    const sent = h.post.mock.calls[0]![0] as any;
+    expect(sent.ip.static.interface).toBe('PPPoE0');
+  });
+
   it('refuses an IP the router does not know', async () => {
     const result = await harness().handlers['set_port_forwarding']!({
       to_host: '198.51.100.7',

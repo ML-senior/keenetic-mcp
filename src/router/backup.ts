@@ -47,7 +47,10 @@ export function createBackupGuard(rci: Rci, host: string, now: () => Date): Back
 
     const createdAt = now().toISOString();
     const stamp = createdAt.replace(/[:.]/g, '-');
-    const path = join(dir, `${host}-${stamp}.txt`);
+    // host may be "192.168.1.1:8080" or a URL; ':' and '/' are not file-name
+    // characters on Windows (and '/' nowhere).
+    const safeHost = host.replace(/^[a-z]+:\/\//i, '').replace(/[^A-Za-z0-9._-]+/g, '_');
+    const path = join(dir, `${safeHost}-${stamp}.txt`);
     await writeFile(path, text, 'utf8');
 
     done = { path, bytes: Buffer.byteLength(text, 'utf8'), createdAt };

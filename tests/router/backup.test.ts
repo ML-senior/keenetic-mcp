@@ -59,6 +59,19 @@ describe('createBackupGuard', () => {
     await expect(readFile(result.path, 'utf8')).resolves.toBe(CONFIG);
   });
 
+  // Seen on a router with the web UI on 8080: the file was named
+  // "192.168.1.1:8080-....txt", which Windows cannot create.
+  it('keeps a host:port out of the file name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kn-'));
+    vi.stubEnv('KEENETIC_STATE_DIR', dir);
+    const guard = createBackupGuard(rciReturning(CONFIG), 'http://192.0.2.1:8080', CLOCK);
+    const result = await guard.ensure();
+    const name = result.path!.split(/[\\/]/).pop()!;
+    expect(name).toMatch(/^192\.0\.2\.1_8080-/);
+    expect(name).not.toMatch(/[:]/);
+    await expect(readFile(result.path!, 'utf8')).resolves.toBe(CONFIG);
+  });
+
   it('fetches once however many times it is asked', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kn-'));
     vi.stubEnv('KEENETIC_STATE_DIR', dir);

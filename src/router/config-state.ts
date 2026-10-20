@@ -75,15 +75,51 @@ export function lastChangeMoved(before: LastChange, after: LastChange): boolean 
   return before.checksum !== after.checksum || before.date !== after.date;
 }
 
-/** The configuration without its `! $$$` header and trailing blank lines. */
-export function configBody(text: string): string {
+/**
+ * The configuration without its `! $$$` header, trailing whitespace and the
+ * names given with `rename`.
+ *
+ * The two sources spell references differently. startup-config.txt writes the
+ * user's names (`role inet for ISP`, `include AccessPoint`, `ip nat Home`);
+ * RCI's `show running-config` writes the system ids for the very same lines
+ * (`GigabitEthernet1`, `WifiMaster0/AccessPoint0`, `Bridge0`). Measured on 5.2:
+ * byte-identical configurations, four differing lines. `aliases` maps a
+ * renamed name to its id, and every whole word that is an alias is rewritten
+ * to the id - except on the `rename` line itself, which both sources share.
+ */
+export function configBody(text: string, aliases: ReadonlyMap<string, string> = new Map()): string {
   return text
     .replace(/\r/g, '')
     .split('\n')
     .filter(line => !/^!\s*\$+/.test(line))
     .map(line => line.replace(/\s+$/, ''))
+    .map(line =>
+      aliases.size === 0 || /^\s*rename\s/.test(line)
+        ? line
+        : line.replace(/[^\s]+/g, word => aliases.get(word) ?? word)
+    )
     .join('\n')
     .trim();
+}
+
+/**
+ * Renamed name -> interface id, from the interface tree. Numeric names (the
+ * switch ports are renamed to "0".."4") are left out: a bare number appears in
+ * far too many unrelated lines to rewrite safely, and a missed alias can only
+ * make the comparison report a difference, never hide one.
+ */
+export async function readInterfaceAliases(rci: Rci): Promise<Map<string, string>> {
+  const aliases = new Map<string, string>();
+  try {
+    const tree = asRecord(await rci.get('show/rc/interface'));
+    for (const [id, value] of Object.entries(tree)) {
+      const rename = asRecord(value)['rename'];
+      if (typeof rename === 'string' && rename !== id && !/^\d+$/.test(rename)) aliases.set(rename, id);
+    }
+  } catch {
+    // Without aliases the comparison only errs towards "unsaved".
+  }
+  return aliases;
 }
 
 /** `show running-config` as text, or null if it could not be read. */
@@ -153,7 +189,8 @@ export async function readConfigState(rci: Rci): Promise<ConfigState> {
     const running = await readRunningConfig(rci);
     if (running !== null) {
       basis = 'content';
-      unsavedChanges = configBody(running) !== configBody(startupText);
+      const aliases = await readInterfaceAliases(rci);
+      unsavedChanges = configBody(running, aliases) !== configBody(startupText, aliases);
     }
   }
 

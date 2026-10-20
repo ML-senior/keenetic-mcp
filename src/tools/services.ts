@@ -135,6 +135,24 @@ function describeTarget(directory: Map<string, HostInfo>, value: unknown): HostI
   return MAC_RE.test(key) ? { name: null, ip: null, active: false } : null;
 }
 
+/**
+ * The WAN a forward should listen on when none is named: whatever carries the
+ * default route. A fixed GigabitEthernet1 is wrong on every PPPoE, L2TP or
+ * PPTP line - there the internet is PPPoE0 and a rule on GigabitEthernet1 is
+ * accepted and never matches anything.
+ */
+async function defaultRouteInterface(ctx: ToolContext): Promise<string> {
+  try {
+    const all = asRecord(await ctx.client.rci.get('show/interface'));
+    for (const [id, value] of Object.entries(all)) {
+      if (asRecord(value)['defaultgw'] === true) return id;
+    }
+  } catch {
+    // Fall through to the old default.
+  }
+  return 'GigabitEthernet1';
+}
+
 async function fetchStaticRules(ctx: ToolContext): Promise<Row[]> {
   return asEntries(await ctx.client.rci.get('ip/static'));
 }
@@ -310,7 +328,7 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
         interface: z
           .string()
           .optional()
-          .describe('WAN interface the rule listens on. Defaults to GigabitEthernet1.'),
+          .describe('WAN interface the rule listens on. Defaults to the one carrying the default route (PPPoE0 on a PPPoE line).'),
         to_port: z
           .number()
           .int()
@@ -335,7 +353,7 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
     },
     guard(async ({ to_host, port, protocol, interface: iface, to_port, end_port, comment, enable }): Promise<ToolResult> => {
       const proto = protocol ?? 'tcp';
-      const wan = iface ?? 'GigabitEthernet1';
+      const wan = iface ?? (await defaultRouteInterface(ctx));
       const mac = await resolveToHost(ctx, to_host);
       checkPort(port);
       if (to_port !== undefined) checkPort(to_port);

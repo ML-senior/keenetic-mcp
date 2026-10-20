@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readConfigState } from '../../src/router/config-state.js';
+import { configBody, readConfigState } from '../../src/router/config-state.js';
 import type { Rci } from '../../src/router/rci.js';
 
 function rci(lastChange: Record<string, unknown>, startup: string | Error, running?: string): Rci {
@@ -97,5 +97,57 @@ describe('readConfigState', () => {
   it('says it does not know when the saved file cannot be read', async () => {
     const state = await readConfigState(rci({ date: 'x', checksum: A }, new Error('boom')));
     expect(state.unsavedChanges).toBeNull();
+  });
+});
+
+/**
+ * Captured on 5.2 from byte-identical configurations: the saved file uses the
+ * names given with `rename`, RCI's running-config the system ids.
+ */
+describe('configBody with interface aliases', () => {
+  const aliases = new Map([
+    ['ISP', 'GigabitEthernet1'],
+    ['Home', 'Bridge0'],
+    ['AccessPoint', 'WifiMaster0/AccessPoint0']
+  ]);
+  const saved = [
+    '! $$$ Agent: http/rci',
+    'interface GigabitEthernet1',
+    '    rename ISP',
+    '    description "Home VLAN"',
+    '!',
+    'interface GigabitEthernet1/0',
+    '    rename 0',
+    '    role inet for ISP',
+    '!',
+    'interface Bridge0',
+    '    rename Home',
+    '    include AccessPoint',
+    '!',
+    'ip nat Home',
+    'ip hotspot',
+    '    policy Home permit',
+    'ip static tcp PPPoE0 80 aa:bb:cc:dd:ee:ff'
+  ].join('\r\n');
+  const running = saved
+    .replace('Agent: http/rci', 'Agent: coala/rci')
+    .replace('role inet for ISP', 'role inet for GigabitEthernet1')
+    .replace('include AccessPoint', 'include WifiMaster0/AccessPoint0')
+    .replace('ip nat Home', 'ip nat Bridge0')
+    .replace('policy Home permit', 'policy Bridge0 permit')
+    .replace(/\r\n/g, '\n');
+
+  it('treats the two spellings as the same configuration', () => {
+    expect(configBody(running, aliases)).toBe(configBody(saved, aliases));
+  });
+
+  it('leaves rename lines and quoted words alone', () => {
+    const body = configBody(saved, aliases);
+    expect(body).toContain('rename ISP');
+    expect(body).toContain('description "Home VLAN"');
+  });
+
+  it('still sees a real change', () => {
+    expect(configBody(running.replace('80', '8080'), aliases)).not.toBe(configBody(saved, aliases));
   });
 });
