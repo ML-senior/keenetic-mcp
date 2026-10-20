@@ -8,6 +8,7 @@ import {
   identifyRouter,
   parseGateway,
   secretAccounts,
+  sshHost,
   writeStoredConfig,
   type StoredSshConfig
 } from '../config/discover.js';
@@ -80,7 +81,8 @@ async function askSsh(deps: InitDeps, host: string): Promise<SshAnswers | null> 
     .trim()
     .toLowerCase();
 
-  const opts: SshClientOptions = { host, port, user };
+  // The router address may carry the web UI's port; SSH has its own.
+  const opts: SshClientOptions = { host: sshHost(host), port, user };
   let config: StoredSshConfig;
   let secret: string;
 
@@ -160,7 +162,7 @@ export async function runInit(deps: InitDeps): Promise<number> {
   if (ssh) {
     const how = ssh.config.auth === 'key' ? `key ${ssh.config.keyPath ?? ''}` : 'password';
     deps.out(
-      `SSH: ${ssh.config.user}@${host}:${String(ssh.config.port)} by ${how}` +
+      `SSH: ${ssh.config.user}@${sshHost(host)}:${String(ssh.config.port)} by ${how}` +
         (sshWhere ? `, secret stored in ${sshWhere}` : '')
     );
   }

@@ -59,6 +59,24 @@ export function configDir(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): st
   return posix.join(env['XDG_CONFIG_HOME'] ?? posix.join(home, '.config'), 'keenetic-mcp');
 }
 
+/**
+ * The router address as SSH and raw sockets need it: no scheme, no path, no
+ * HTTP port. The router address is an HTTP address and may carry a port
+ * ("192.168.1.1:8080" once the web UI is moved off 80); handing that to SSH
+ * makes getaddrinfo look up a host literally named "192.168.1.1:8080".
+ * Bracketed IPv6 ("[fd00::1]:8080") keeps its address.
+ */
+export function sshHost(address: string): string {
+  const withoutScheme = address.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  const authority = withoutScheme.split(/[/?#]/)[0] ?? '';
+  const withoutUser = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
+  const bracketed = /^\[([^\]]+)\]/.exec(withoutUser);
+  if (bracketed) return bracketed[1]!;
+  // A bare IPv6 address has several colons and no port to strip.
+  if ((withoutUser.match(/:/g) ?? []).length > 1) return withoutUser;
+  return withoutUser.split(':')[0]!;
+}
+
 export interface StoredSshConfig {
   port: number;
   user: string;

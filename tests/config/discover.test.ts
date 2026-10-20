@@ -8,6 +8,7 @@ import {
   identifyRouter,
   parseGateway,
   readStoredConfig,
+  sshHost,
   writeStoredConfig
 } from '../../src/config/discover.js';
 
@@ -126,5 +127,28 @@ describe('stored config', () => {
     const { writeFile } = await import('node:fs/promises');
     await writeFile(join(dir, 'config.json'), '{"host":"192.0.2.1"}', 'utf8');
     await expect(readStoredConfig(dir)).resolves.toBeNull();
+  });
+});
+
+describe('sshHost', () => {
+  // Reported from a router whose web UI was moved to 8080: init handed
+  // "192.168.1.1:8080" to SSH, and getaddrinfo failed with ENOTFOUND.
+  it('drops the HTTP port', () => {
+    expect(sshHost('192.168.1.1:8080')).toBe('192.168.1.1');
+  });
+
+  it('drops a scheme, a path and credentials', () => {
+    expect(sshHost('http://192.168.1.1:8080/')).toBe('192.168.1.1');
+    expect(sshHost('https://admin@my.keenetic.net/rci')).toBe('my.keenetic.net');
+  });
+
+  it('leaves a plain host alone', () => {
+    expect(sshHost('192.168.1.1')).toBe('192.168.1.1');
+    expect(sshHost('  router.lan ')).toBe('router.lan');
+  });
+
+  it('keeps IPv6 addresses whole', () => {
+    expect(sshHost('[fd00::1]:8080')).toBe('fd00::1');
+    expect(sshHost('fd00::1')).toBe('fd00::1');
   });
 });

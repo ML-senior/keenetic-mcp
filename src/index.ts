@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { runInitFromTerminal } from './cli/init.js';
-import { configDir, readStoredConfig, secretAccounts } from './config/discover.js';
+import { configDir, readStoredConfig, secretAccounts, sshHost } from './config/discover.js';
 import { loadConfig, type StoredCredentials } from './config/load.js';
 import { createSecretStore, spawnRunner } from './config/secrets.js';
 import { createBackupGuard } from './router/backup.js';
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     password: config.password
   });
   // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
-  const bareHost = config.host.replace(/^https?:\/\//, '').split(':')[0]!;
+  const bareHost = sshHost(config.host);
   const ctx: ToolContext = {
     client,
     routerHost: bareHost,

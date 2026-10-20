@@ -215,3 +215,18 @@ describe('runInit SSH', () => {
     expect(out.join('\n')).toMatch(/1-65535/);
   });
 });
+
+describe('runInit with the web UI on another port', () => {
+  it('hands SSH the bare host, not host:http-port', async () => {
+    const verifySsh = vi.fn(async () => ({ ok: true as const, detail: 'ok' }));
+    const { deps, out } = await makeDeps({
+      prompt: vi.fn(async (q: string) => (q.includes('Router address') ? '192.0.2.1:8080' : q.includes('Enable SSH') ? 'y' : '')),
+      hidden: vi.fn().mockResolvedValueOnce('router-pass').mockResolvedValueOnce('pw'),
+      verifySsh
+    });
+    await expect(runInit(deps)).resolves.toBe(0);
+    expect(deps.identify).toHaveBeenCalledWith('192.0.2.1:8080');
+    expect(verifySsh).toHaveBeenCalledWith(expect.objectContaining({ host: '192.0.2.1', port: 222 }));
+    expect(out.join('\n')).toMatch(/root@192\.0\.2\.1:222/);
+  });
+});
