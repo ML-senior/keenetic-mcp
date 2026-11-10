@@ -8,13 +8,15 @@ import { configDir, readStoredConfig, secretAccounts, sshHost } from './config/d
 import { loadConfig, type StoredCredentials } from './config/load.js';
 import { createSecretStore, spawnRunner } from './config/secrets.js';
 import { createBackupGuard } from './router/backup.js';
-import { createClient } from './router/client.js';
+import { createClient, type KeeneticClient } from './router/client.js';
 import type { SessionOptions } from './router/session.js';
 import { createSshClient } from './ssh/client.js';
 import { registerConfigTools } from './tools/config.js';
 import { registerDeviceTools } from './tools/devices.js';
 import { registerDiagnosticsTools } from './tools/diagnostics.js';
 import { registerInterfaceTools } from './tools/interfaces.js';
+import { registerMeshTools } from './tools/mesh.js';
+import { registerNetfilterTools } from './tools/netfilter.js';
 import { registerNetworkTools } from './tools/network.js';
 import { registerRawTool } from './tools/raw.js';
 import type { ToolContext } from './tools/registry.js';
@@ -22,6 +24,9 @@ import { registerSegmentTools } from './tools/segments.js';
 import { registerServiceTools } from './tools/services.js';
 import { registerSshTools } from './tools/ssh.js';
 import { registerSystemTools } from './tools/system.js';
+import { registerTrafficTools } from './tools/traffic.js';
+import { registerWifiTools } from './tools/wifi.js';
+import { registerWireguardTools } from './tools/wireguard.js';
 import { loadLocalEnv, resolveVersion } from './version.js';
 
 export function createServer(ctx: ToolContext): McpServer {
@@ -34,6 +39,11 @@ export function createServer(ctx: ToolContext): McpServer {
   registerConfigTools(server, ctx);
   registerServiceTools(server, ctx);
   registerDiagnosticsTools(server, ctx);
+  registerTrafficTools(server, ctx);
+  registerWifiTools(server, ctx);
+  registerNetfilterTools(server, ctx);
+  registerWireguardTools(server, ctx);
+  registerMeshTools(server, ctx);
   registerSshTools(server, ctx);
   registerRawTool(server, ctx);
   return server;
@@ -91,6 +101,9 @@ async function main(): Promise<void> {
   };
   if (config.timeoutMs !== undefined) sessionOptions.timeoutMs = config.timeoutMs;
   const client = createClient(sessionOptions);
+  // One client per Mesh node, kept for the life of the server so each node is
+  // authenticated once rather than on every call.
+  const nodeClients = new Map<string, KeeneticClient>();
   // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
   const bareHost = sshHost(config.host);
   const ctx: ToolContext = {
@@ -98,7 +111,15 @@ async function main(): Promise<void> {
     routerHost: bareHost,
     maxResponseBytes: config.maxResponseBytes,
     readOnly: config.readOnly,
-    backup: createBackupGuard(client.rci, config.host, () => new Date())
+    backup: createBackupGuard(client.rci, config.host, () => new Date()),
+    connect: host => {
+      let node = nodeClients.get(host);
+      if (!node) {
+        node = createClient({ ...sessionOptions, host });
+        nodeClients.set(host, node);
+      }
+      return node;
+    }
   };
   // Read-only wins over --ssh: a shell cannot be made read-only by filtering.
   if (config.ssh && !config.readOnly) {

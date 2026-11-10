@@ -14,6 +14,11 @@ export interface ToolContext {
   ssh?: SshClient;
   /** The router address without scheme or HTTP port, for non-HTTP probes. */
   routerHost?: string;
+  /**
+   * Opens a client for another router with the same credentials. Used to reach
+   * Mesh nodes, which share the controller's administrator account.
+   */
+  connect?: (host: string) => KeeneticClient;
   /** What the SSH client was configured with, never the secret. */
   sshTarget?: { port: number; user: string; auth: 'password' | 'key' };
 }

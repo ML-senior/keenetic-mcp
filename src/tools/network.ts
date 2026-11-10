@@ -97,6 +97,56 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
   );
 
   server.registerTool(
+    'list_schedules',
+    {
+      title: 'List schedules',
+      description:
+        'The schedules defined on the router, each as the weekly intervals during which it ' +
+        'is on. These are the names update_device takes for its schedule argument, to limit ' +
+        'when a device has internet access.',
+      inputSchema: {},
+      annotations: READ_ONLY
+    },
+    guard(async () => {
+      const raw = asRecord(await ctx.client.rci.get('show/schedule'));
+      // Wrapped in `schedule` on the releases measured; taken bare otherwise.
+      const tree = raw['schedule'] !== undefined ? asRecord(raw['schedule']) : raw;
+      const schedules = Object.entries(tree).map(([name, value]) => {
+        const record = asRecord(value);
+        const actions = asEntries(record['action']);
+        // The router lists alternating start and stop events in week order;
+        // each start is paired with the stop that follows it.
+        const intervals: string[] = [];
+        let open: { dow: string; time: string } | null = null;
+        for (const action of actions) {
+          const dow = str(action, 'dow');
+          const time = str(action, 'time');
+          if (action['type'] === 'start') {
+            open = { dow, time };
+          } else if (action['type'] === 'stop' && open) {
+            intervals.push(
+              open.dow === dow ? `${dow} ${open.time}-${time}` : `${open.dow} ${open.time} - ${dow} ${time}`
+            );
+            open = null;
+          }
+        }
+        const next = actions
+          .map(a => ({ type: str(a, 'type'), left: numOrNull(a['left']) }))
+          .filter((a): a is { type: string; left: number } => a.left !== null)
+          .sort((a, b) => a.left - b.left)[0];
+        return {
+          name,
+          description: str(record, 'description'),
+          intervals,
+          // The next event being a stop means the schedule is on right now.
+          ...(next ? { activeNow: next.type === 'stop', nextChange: `${next.type} in ${String(next.left)} s` } : {})
+        };
+      });
+      return ok({ schedules, total: schedules.length }, ctx.maxResponseBytes);
+    })
+  );
+
+  server.registerTool(
     'get_wifi_status',
     {
       title: 'Wi-Fi status',

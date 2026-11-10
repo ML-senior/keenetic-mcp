@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { runCli } from '../router/cli.js';
 import { ValidationError } from '../router/errors.js';
 import { asEntries, asRecord, type Row } from '../shape/coerce.js';
 import { projectDevice, type DeviceSummary } from '../shape/project.js';
@@ -206,6 +207,37 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
 
   // A read-only server must not advertise what it will refuse to do.
   if (ctx.readOnly) return;
+
+  server.registerTool(
+    'wake_device',
+    {
+      title: 'Wake a device (Wake-on-LAN)',
+      description:
+        'Has the router send a Wake-on-LAN magic packet to a device on its network, to turn ' +
+        'on a sleeping or powered-off PC, NAS or server. The device must be wired, have ' +
+        'Wake-on-LAN enabled in its firmware, and be known to the router. The packet is ' +
+        'sent blind: there is no acknowledgement, so check with list_devices a minute later ' +
+        'whether it came up. Changes nothing in the router configuration.',
+      inputSchema: {
+        mac: z.string().describe('MAC address of the device to wake, any case.')
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+    },
+    guard(async ({ mac: rawMac }): Promise<ToolResult> => {
+      const mac = normMac(rawMac);
+      const host = await operationalHost(ctx, mac);
+      await runCli(ctx.client.rci, `ip hotspot wake ${mac}`);
+      return ok({
+        sent: true,
+        mac,
+        device: host ? String(host['name'] || host['hostname'] || mac) : null,
+        wasOnline: host ? host['active'] === true : null,
+        note: host
+          ? 'Magic packet sent. Give it up to a minute, then check with list_devices.'
+          : 'Magic packet sent, but the router does not know this MAC - check the address.'
+      });
+    })
+  );
 
   server.registerTool(
     'update_device',

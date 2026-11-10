@@ -8,9 +8,9 @@
 [![MCP](https://img.shields.io/badge/MCP-server-black)](https://modelcontextprotocol.io)
 [![KeeneticOS](https://img.shields.io/badge/KeeneticOS-5.1%20tested-green)](#supported-routers)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](#requirements)
-[![tools](https://img.shields.io/badge/MCP%20tools-44-orange)](#full-tool-reference)
+[![tools](https://img.shields.io/badge/MCP%20tools-56-orange)](#full-tool-reference)
 
-> **Fork of [salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** — extended from 18 to 44 tools: full network-service management (port forwarding, KeenDNS, DNS, static DHCP, firewall), mesh and storage monitoring, log and ping diagnostics, and **opt-in SSH access** for Entware packages and their configs. Same safety model, same zero-install philosophy.
+> **Fork of [salatmaster/keenetic-mcp](https://github.com/salatmaster/keenetic-mcp)** — extended from 18 to 56 tools: full network-service management (port forwarding, KeenDNS, DNS, static DHCP, firewall), traffic history, Wi-Fi channel analysis, the live packet filter, WireGuard peers, Mesh onboarding and per-node access, storage monitoring, log and ping diagnostics, and **opt-in SSH access** for Entware packages and their configs. Same safety model, same zero-install philosophy.
 
 ---
 
@@ -176,7 +176,7 @@ passwords from the terminal; nothing ever lands in a log or a tool response.
 
 ## 📖 Full tool reference
 
-**44 tools.** Read tools are always available; write tools hide in
+**56 tools.** Read tools are always available; write tools hide in
 `--read-only` mode; SSH tools hide unless shell access is enabled (`--ssh` or
 the SSH step of `init`) — except `ssh_check`, which only probes ports.
 
@@ -202,7 +202,15 @@ the SSH step of `init`) — except `ssh_check`, which only probes ports.
 | `get_dhcp_static` | fixed MAC-to-IP reservations |
 | `get_firewall_rules` | access-lists and firewall settings, parsed from the running config |
 | `get_log` | system log, with line count and text filter |
-| `get_mesh_nodes` | Mesh controller and extenders, with per-node client counts |
+| `get_mesh_nodes` | Mesh controller and extenders, with per-node client counts, backhaul uplink and load |
+| `list_mesh_candidates` | new or factory-reset Keenetic routers the controller can see and adopt |
+| `mesh_node_rci` | the API of a Mesh extender itself: its ports, radios, clients, load. Only reaches hosts the controller lists as its nodes |
+| `get_traffic` | speed history for an interface or one device, from the router's own archive: 3 min, 1 h, 3 h or 1 day |
+| `get_bandwidth_now` | which devices are moving the most traffic right now |
+| `get_wifi_survey` | neighbouring networks, per-channel congestion and a channel recommendation, one radio per call. Scanning can stall that radio's clients for a few seconds |
+| `get_netfilter` | the packet filter actually in force (`show netfilter`), parsed: summary, one chain, or a search by port, address or MAC |
+| `list_wireguard_peers` | WireGuard tunnels and peers, with endpoint, traffic and last handshake; never the keys |
+| `list_schedules` | schedules as weekly intervals, and whether each is on now |
 | `get_media` | USB/flash partitions, free space, what uses them |
 | `get_opkg_status` | Entware binding: which drive, which init script |
 | `get_ping_check` | router-side reachability probes for its internet links; says so when no profile is actually probing |
@@ -222,6 +230,9 @@ the SSH step of `init`) — except `ssh_check`, which only probes ports.
 | `set_keendns_mapping` / `remove_keendns_mapping` | publish or withdraw a KeenDNS web-app mapping, with HTTPS redirect and public/private access |
 | `set_dns_host` / `remove_dns_host` | static DNS records served by the router; refuses to round-robin an existing name |
 | `set_dhcp_host` / `remove_dhcp_host` | fixed MAC-to-IP reservations; refuses an IP already reserved for another MAC |
+| `set_wireguard_peer` / `remove_wireguard_peer` | add, change or delete a peer on an existing WireGuard interface, by public key |
+| `acquire_mesh_node` | adopt a router from `list_mesh_candidates` into the Wi-Fi system; it takes over the controller's Wi-Fi settings. Needs `accept_eula=true` |
+| `wake_device` | Wake-on-LAN: the router sends the magic packet |
 | `reboot_router` | reboot, only with `confirm=true`; reports whether unsaved changes were lost |
 | `save_config` | make pending changes survive a reboot |
 
@@ -389,11 +400,14 @@ command's syntax from the router itself.
 - [x] Port forwarding, KeenDNS mappings, static DNS, static DHCP, firewall read
 - [x] Mesh nodes, storage, OPKG status, system log, ping, safe reboot
 - [x] Opt-in SSH: exec, file read/write with backup + md5 verify, opkg
-- [ ] `show/netfilter` parsed view (live firewall counters)
-- [ ] Wi-Fi site survey and channel analysis
-- [ ] Traffic statistics over time (interface counters sampling)
+- [x] `show/netfilter` parsed view (the rule set; the router prints no counters there)
+- [x] Wi-Fi site survey and channel analysis
+- [x] Traffic statistics over time, per interface and per device (from the router's own archive)
+- [x] WireGuard peer management (`interface WireguardN` write tools) — not yet exercised on hardware
+- [x] Mesh: adopt a new router, reach each node's own API — adoption not yet exercised on hardware
 - [ ] npm publication under a scoped name
-- [ ] WireGuard peer management (`interface WireguardN` write tools)
+- [ ] WireGuard interface creation and client config export
+- [ ] Per-device speed limits; Wi-Fi channel and SSID changes
 
 Want one of these? Open an issue.
 

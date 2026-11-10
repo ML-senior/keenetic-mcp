@@ -33,7 +33,15 @@ const READ_TOOLS = [
   'list_routes',
   'list_segments',
   'run_ping',
-  'ssh_check'
+  'ssh_check',
+  'get_traffic',
+  'get_bandwidth_now',
+  'get_wifi_survey',
+  'get_netfilter',
+  'list_wireguard_peers',
+  'list_mesh_candidates',
+  'list_schedules',
+  'mesh_node_rci'
 ];
 
 const WRITE_TOOLS = [
@@ -51,12 +59,17 @@ const WRITE_TOOLS = [
   'set_dhcp_host',
   'remove_dhcp_host',
   'delete_interface',
-  'reboot_router'
+  'reboot_router',
+  'set_wireguard_peer',
+  'remove_wireguard_peer',
+  'acquire_mesh_node',
+  'wake_device'
 ];
 
 // set_dns_host only ever adds a record and refuses a conflicting name, so it
 // is annotated writing-but-not-destructive rather than destructive.
-const NON_DESTRUCTIVE_WRITES = ['set_dns_host'];
+// wake_device sends one packet and configures nothing.
+const NON_DESTRUCTIVE_WRITES = ['set_dns_host', 'wake_device'];
 
 function context(readOnly: boolean): ToolContext {
   const client = {
@@ -69,7 +82,7 @@ function context(readOnly: boolean): ToolContext {
       features: new Set<string>()
     }))
   } as unknown as KeeneticClient;
-  return { client, maxResponseBytes: 25_000, readOnly, backup: stubBackup() };
+  return { client, maxResponseBytes: 25_000, readOnly, backup: stubBackup(), connect: () => client };
 }
 
 /** Speaks real MCP to the assembled server over a linked in-memory transport. */

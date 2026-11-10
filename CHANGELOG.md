@@ -49,6 +49,32 @@ rather than by a number until they are tagged.
 
 ### Added
 
+- **`get_traffic`** - speed history for an interface or one device, read from
+  the archive the router keeps for its own graphs (3 min, 1 h, 3 h, 1 day), so
+  nothing is sampled or stored here. **`get_bandwidth_now`** ranks the devices
+  by what they are moving this moment, in a single batched request.
+- **`get_wifi_survey`** - neighbouring networks, per-channel congestion and a
+  channel recommendation. A survey takes the radio off its channel and can
+  stall its clients, so it runs on one named radio per call and never by
+  default.
+- **`get_netfilter`** - `show netfilter` parsed into tables, chains and rules:
+  a summary, one chain, or a search by port, address, MAC or verdict. The
+  router prints no packet counters there, so this is the rule set in force.
+- **`list_wireguard_peers`, `set_wireguard_peer`, `remove_wireguard_peer`** -
+  peers on an existing WireGuard interface, by public key. Keys are never
+  returned. *Written from the vendor's CLI syntax and verified by read-back,
+  but not yet exercised on a router that has a WireGuard interface.*
+- **`list_mesh_candidates`, `acquire_mesh_node`** - find a new or factory-reset
+  Keenetic on the network and adopt it into the Wi-Fi system, which is the
+  whole setup for a new node. *Adoption has not been exercised on hardware: no
+  candidate was available. The command is the one confirmed on the vendor
+  forum.*
+- **`mesh_node_rci`** - the API of a Mesh extender itself. It only reaches
+  hosts the controller lists as its own nodes, so the router's credentials are
+  never offered to an arbitrary address.
+- **`list_schedules`** and **`wake_device`** (Wake-on-LAN).
+- `get_mesh_nodes` reports each extender's backhaul uplink, CPU load, internet
+  reachability and any newer firmware on offer.
 - `list_devices` takes `search`: a case-insensitive substring of the name,
   hostname, IP or MAC.
 - `get_device` matches names without regard to case, accepts a MAC in any
@@ -68,5 +94,5 @@ rather than by a number until they are tagged.
   The copies had drifted: some treated an array as a record, some did not.
 - `npm run typecheck` passes again; it had been failing on the NDW4 session
   tests.
-- Tests: 361 → 431, including the SSH client against a real in-process SSH
+- Tests: 361 → 527, including the SSH client against a real in-process SSH
   server and the `ssh_write_file` script under a real shell.

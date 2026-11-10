@@ -1,0 +1,40 @@
+
+==== Table: "nat" ====
+== Chain PREROUTING ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; jump to "_NDM_DNAT"
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; "ndmmark" match, value: 0x800/0x800, invert: 0x1; jump to "_NDM_UPNP_REDIRECT_SYS"
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , cmp: , dport: 8080; jump to "_NDM_HTTP_DNAT_WAN_NDNS_"
+src: 0.0.0.0/0, dst: 198.51.100.11/32, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , cmp: , dport: 443; jump to "_NDM_HTTP_DNAT_EA_NDNS_"
+-> Chain default policy: ACCEPT
+== Chain INPUT ==
+-> Chain default policy: ACCEPT
+== Chain POSTROUTING ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; jump to "_NDM_SNAT"
+-> Chain default policy: ACCEPT
+== Chain _NDM_SNAT ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "eth3", proto: "any"; jump to "_NDM_STATIC_SNAT"
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "ppp0", proto: "any"; SNAT, address: 198.51.100.11
+-> Chain default policy: RETURN
+== Chain _NDM_DNAT ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , cmp: , dport: 8443; "ndmmark" match, value: 0x40/0x40, invert: 0x0; DNAT, address: 192.0.2.13, port: 443
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , cmp: , dport: 2222; DNAT, address: 192.0.2.10
+-> Chain default policy: RETURN
+
+==== Table: "filter" ====
+== Chain INPUT ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; "state" match, state: INVALID; DROP
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; "state" match, state: ESTABLISHED, RELATED; ACCEPT
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; jump to "SSH_IN"
+-> Chain default policy: DROP
+== Chain FORWARD ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "br0", out: "*", proto: "any"; "mac" match, addr 02:00:00:00:00:21; RETURN
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , SYN | RST, cmp: , SYN; TCPMSS, MSS: Clamp to PMTU
+-> Chain default policy: DROP
+== Chain SSH_IN ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "TCP"; "tcp" match, mask: , cmp: , dport: 22; "state" match, state: NEW; ACCEPT
+-> Chain default policy: RETURN
+
+==== Table: "mangle" ====
+== Chain PREROUTING ==
+src: 0.0.0.0/0, dst: 0.0.0.0/0, in: "*", out: "*", proto: "any"; TTL, mode: INC, value: 1
+-> Chain default policy: ACCEPT

@@ -217,6 +217,13 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
           // switch port for a wired backhaul, a radio for a wireless one.
           const uplink = str(backhaul, 'uplink');
           if (uplink) node['backhaulUplink'] = uplink;
+          // Offered by the vendor and not yet installed. Compared by release
+          // string: the `fw-update-available` flag was true on a node already
+          // running the offered release (KN-3810, KeeneticOS 5.2).
+          const offered = str(member, 'fw-release-available');
+          if (offered && offered !== str(member, 'fw-release')) node['firmwareAvailable'] = offered;
+          const system = asRecord(member['system']);
+          if (system['cpuload'] !== undefined) node['cpuLoad'] = numOrNull(system['cpuload']);
           if (typeof member['internet-available'] === 'boolean') {
             node['internetAvailable'] = member['internet-available'];
           }
