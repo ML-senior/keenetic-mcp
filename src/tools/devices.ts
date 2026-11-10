@@ -1,17 +1,41 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import { capList } from '../shape/budget.js';
-import { projectDevice } from '../shape/project.js';
-import { fail, guard, ok, READ_ONLY, type ToolContext, type ToolResult } from './registry.js';
+import { ValidationError } from '../router/errors.js';
+import { asEntries, asRecord, type Row } from '../shape/coerce.js';
+import { projectDevice, type DeviceSummary } from '../shape/project.js';
+import { isMac, normMac } from '../shape/validate.js';
+import {
+  fail,
+  guard,
+  listResult,
+  ok,
+  READ_ONLY,
+  WRITE,
+  type ToolContext,
+  type ToolResult
+} from './registry.js';
 import { describeWrite, verifiedWrite } from './write.js';
 
-type HostRecord = Record<string, unknown>;
+type HostRecord = Row;
 
 async function fetchHosts(ctx: ToolContext): Promise<HostRecord[]> {
-  const raw = await ctx.client.rci.get('show/ip/hotspot');
-  const container = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const hosts = container['host'];
-  return Array.isArray(hosts) ? (hosts as HostRecord[]) : [];
+  return asEntries(asRecord(await ctx.client.rci.get('show/ip/hotspot'))['host']);
+}
+
+function sameMac(row: HostRecord, mac: string): boolean {
+  return String(row['mac']).toLowerCase() === mac;
+}
+
+/** Case-insensitive substring match over what a person would type to find a device. */
+function matchesSearch(host: HostRecord, device: DeviceSummary, needle: string): boolean {
+  return [device.name, device.ip, device.mac, host['hostname'], host['name']].some(
+    field => typeof field === 'string' && field.toLowerCase().includes(needle)
+  );
+}
+
+/** Never-seen and unknown sort last, whichever way the list is ordered. */
+function lastSeenRank(device: DeviceSummary): number {
+  return device.lastSeenSec ?? Number.POSITIVE_INFINITY;
 }
 
 /** Reads one row out of a config branch that stores hosts as a MAC-keyed array. */
@@ -20,9 +44,9 @@ async function branchEntry(
   path: 'ip/hotspot/host' | 'known/host',
   mac: string
 ): Promise<HostRecord | undefined> {
-  const raw = await ctx.client.rci.get(path);
-  const rows = Array.isArray(raw) ? (raw as HostRecord[]) : [];
-  return rows.find(row => String(row['mac']).toLowerCase() === mac.toLowerCase());
+  // asEntries, not Array.isArray: the router unwraps a branch holding a single
+  // record into a bare object, and that must not read as "no rows".
+  return asEntries(await ctx.client.rci.get(path)).find(row => sameMac(row, mac));
 }
 
 /**
@@ -34,8 +58,7 @@ async function branchEntry(
  * that made an earlier version report every rename as failed.
  */
 async function operationalHost(ctx: ToolContext, mac: string): Promise<HostRecord | undefined> {
-  const hosts = await fetchHosts(ctx);
-  return hosts.find(row => String(row['mac']).toLowerCase() === mac.toLowerCase());
+  return (await fetchHosts(ctx)).find(row => sameMac(row, mac));
 }
 
 export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
@@ -46,7 +69,8 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Every device the router knows about, with IP, name, how it is connected, signal ' +
         'strength and traffic counters. Use filter to narrow to active, wired, wireless or ' +
-        'blocked devices, and sort to rank by traffic, name, signal or last seen.',
+        'blocked devices, search to find one by part of its name, IP or MAC, and sort to ' +
+        'rank by traffic, name, signal or last seen.',
       inputSchema: {
         filter: z
           .enum(['all', 'active', 'wired', 'wireless', 'blocked'])
@@ -55,14 +79,25 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
         sort: z
           .enum(['traffic', 'name', 'rssi', 'last_seen'])
           .optional()
-          .describe('Ordering. Defaults to traffic, highest first.'),
+          .describe(
+            'Ordering. Defaults to traffic, highest first. last_seen puts the most recently ' +
+              'heard-from device first.'
+          ),
+        search: z
+          .string()
+          .optional()
+          .describe('Case-insensitive substring of the name, hostname, IP or MAC.'),
         limit: z.number().int().min(1).max(500).optional().describe('Maximum rows. Defaults to 50.')
       },
       annotations: READ_ONLY
     },
-    guard(async ({ filter, sort, limit }) => {
+    guard(async ({ filter, sort, search, limit }) => {
       const hosts = await fetchHosts(ctx);
-      let devices = hosts.map(projectDevice);
+      const needle = search?.trim().toLowerCase() ?? '';
+      let devices = hosts
+        .map(host => ({ host, device: projectDevice(host) }))
+        .filter(({ host, device }) => needle === '' || matchesSearch(host, device, needle))
+        .map(({ device }) => device);
 
       switch (filter) {
         case 'active':
@@ -89,20 +124,19 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
           devices.sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999));
           break;
         case 'last_seen':
-          devices.sort((a, b) => Number(b.active) - Number(a.active));
+          // Seconds since last heard from, so ascending is most recent first.
+          // This used to sort on `active` alone, which left every online
+          // device in arbitrary order - not what the name promises.
+          devices.sort(
+            (a, b) => lastSeenRank(a) - lastSeenRank(b) || Number(b.active) - Number(a.active)
+          );
           break;
         default:
           devices.sort((a, b) => b.rxBytes + b.txBytes - (a.rxBytes + a.txBytes));
           break;
       }
 
-      const capped = capList(devices, limit ?? 50, ctx.maxResponseBytes);
-      return ok({
-        devices: capped.items,
-        shown: capped.shown,
-        total: capped.total,
-        ...(capped.note ? { note: capped.note } : {})
-      });
+      return listResult('devices', devices, limit ?? 50, ctx.maxResponseBytes);
     })
   );
 
@@ -112,7 +146,8 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
       title: 'Get one device in full',
       description:
         'Every field the router holds for a single device: DHCP lease, Wi-Fi rate and mode, ' +
-        'access policy, traffic shaping, first and last seen. Identify it by MAC, IP or name.',
+        'access policy, traffic shaping, first and last seen. Identify it by MAC, IP or name ' +
+        '(the name is matched without regard to case; a unique partial name also works).',
       inputSchema: {
         mac: z.string().optional().describe('MAC address, any case.'),
         ip: z.string().optional().describe('Current IPv4 address.'),
@@ -126,25 +161,46 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
       }
 
       const hosts = await fetchHosts(ctx);
-      const wanted = mac?.toLowerCase();
-      const match = hosts.find(host => {
-        const hostMac = typeof host['mac'] === 'string' ? host['mac'].toLowerCase() : '';
-        if (wanted && hostMac === wanted) return true;
-        if (ip && host['ip'] === ip) return true;
-        if (name && (host['name'] === name || host['hostname'] === name)) return true;
-        return false;
-      });
+      const label = (h: HostRecord): string => String(h['name'] || h['hostname'] || h['mac']);
 
-      if (!match) {
-        const known = hosts.map(h => String(h['name'] ?? h['hostname'] ?? h['mac'])).join(', ');
+      // An exact identifier wins outright: MAC, then IP, then the full name.
+      const wantedMac = mac && isMac(mac) ? normMac(mac) : mac?.trim().toLowerCase();
+      const wantedName = name?.trim().toLowerCase();
+      const names = (h: HostRecord): string[] =>
+        [h['name'], h['hostname']]
+          .filter((v): v is string => typeof v === 'string' && v !== '')
+          .map(v => v.toLowerCase());
+
+      let matches = hosts.filter(
+        h =>
+          (wantedMac !== undefined && wantedMac !== '' && sameMac(h, wantedMac)) ||
+          (ip !== undefined && ip !== '' && h['ip'] === ip.trim()) ||
+          (wantedName !== undefined && wantedName !== '' && names(h).includes(wantedName))
+      );
+      // Only then a partial name - and only if it points at exactly one device.
+      if (matches.length === 0 && wantedName) {
+        matches = hosts.filter(h => names(h).some(n => n.includes(wantedName)));
+      }
+
+      if (matches.length === 0) {
+        const known = hosts.map(label).join(', ');
         return fail(
-          new Error(
+          new ValidationError(
             `No device matched. Known devices: ${known || 'none'}. ` +
               'Call list_devices to see them with their addresses.'
           )
         );
       }
-      return ok(match);
+      if (matches.length > 1) {
+        return fail(
+          new ValidationError(
+            `${String(matches.length)} devices match: ` +
+              matches.map(h => `${label(h)} (${String(h['mac'])})`).join(', ') +
+              '. Identify the one you mean by its MAC.'
+          )
+        );
+      }
+      return ok(matches[0], ctx.maxResponseBytes);
     })
   );
 
@@ -167,9 +223,13 @@ export function registerDeviceTools(server: McpServer, ctx: ToolContext): void {
         schedule: z.string().optional().describe('Schedule name.'),
         priority: z.number().int().min(0).max(7).optional().describe('Traffic priority, 0 to 7.')
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+      annotations: WRITE
     },
-    guard(async ({ mac, name, access, policy, schedule, priority }): Promise<ToolResult> => {
+    guard(async ({ mac: rawMac, name, access, policy, schedule, priority }): Promise<ToolResult> => {
+      // Normalized before anything is sent: the router compares MACs as
+      // strings, so `AA-BB-...` is accepted, changes nothing, and then fails
+      // verification with a message that blames the wrong thing.
+      const mac = normMac(rawMac);
       if (
         name === undefined &&
         access === undefined &&

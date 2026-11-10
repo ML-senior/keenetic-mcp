@@ -78,3 +78,25 @@ describe('loadConfig precedence', () => {
     ).rejects.toThrow(/positive integer/);
   });
 });
+
+describe('loadConfig request timeout', () => {
+  const env = (extra: Record<string, string> = {}) => extra as NodeJS.ProcessEnv;
+
+  it('leaves the timeout out when nothing sets it, so the session default applies', async () => {
+    expect('timeoutMs' in (await loadConfig([], env(), STORED))).toBe(false);
+  });
+
+  it('reads it from the flag, and lets the environment win', async () => {
+    expect((await loadConfig(['--timeout-ms', '20000'], env(), STORED)).timeoutMs).toBe(20_000);
+    expect(
+      (await loadConfig(['--timeout-ms', '20000'], env({ KEENETIC_TIMEOUT_MS: '30000' }), STORED))
+        .timeoutMs
+    ).toBe(30_000);
+  });
+
+  it.each(['abc', '500', '999999', '1500.5'])('refuses %j', async value => {
+    await expect(loadConfig([], env({ KEENETIC_TIMEOUT_MS: value }), STORED)).rejects.toThrow(
+      /request timeout/
+    );
+  });
+});

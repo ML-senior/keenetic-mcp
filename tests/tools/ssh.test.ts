@@ -162,13 +162,13 @@ describe('ssh_write_file', () => {
   function writeHarness(content: string) {
     const expected = createHash('md5').update(content, 'utf8').digest('hex');
     const ssh = fakeSsh(cmd => {
-      if (cmd.startsWith('if [ -f ')) return { stdout: `BACKED_UP\n${expected}\n`, stderr: '', code: 0 };
+      if (cmd.startsWith("p='")) return { stdout: `BACKED_UP\n${expected}\n`, stderr: '', code: 0 };
       return { stdout: '', stderr: '', code: 0 };
     });
     return { ssh, expected };
   }
 
-  it('backs up, writes via base64 and verifies the md5', async () => {
+  it('backs up, sends the content on stdin and verifies the md5', async () => {
     const { ssh } = writeHarness('new-config\n');
     const out = payload(
       await harness({ ssh: ssh.client })['ssh_write_file']!({
@@ -178,8 +178,23 @@ describe('ssh_write_file', () => {
     );
     expect(out.md5Verified).toBe(true);
     expect(out.backup).toMatch(/^\/opt\/etc\/app\.conf\.bak-/);
-    expect(ssh.commands[0]).toContain('base64 -d');
-    expect(ssh.commands[0]).toContain("cp -p '/opt/etc/app.conf'");
+    expect(ssh.commands[0]).toContain("p='/opt/etc/app.conf'");
+    expect(ssh.commands[0]).toContain('cp -p "$p" "$b"');
+    // The content travels on stdin: a config larger than the shell's
+    // argument limit could never be written while it rode on the command line.
+    expect(ssh.commands[0]).not.toContain('new-config');
+    expect(vi.mocked(ssh.client.exec).mock.calls[0]![2]).toEqual({ stdin: 'new-config\n' });
+  });
+
+  it('reports a transfer that arrived damaged, and that nothing was replaced', async () => {
+    const ssh = fakeSsh(() => ({ stdout: 'deadbeef\n', stderr: '', code: 3 }));
+    const result = await harness({ ssh: ssh.client })['ssh_write_file']!({
+      path: '/opt/etc/app.conf',
+      content: 'x'
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/checksum does not match/);
+    expect(result.content[0]!.text).toMatch(/existing file is untouched/);
   });
 
   it('fails loudly when the checksum does not match', async () => {

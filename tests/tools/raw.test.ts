@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/server';
-import { registerRawTool } from '../../src/tools/raw.js';
+import { isReadOnlyBody, registerRawTool } from '../../src/tools/raw.js';
 import type { ToolContext, ToolResult } from '../../src/tools/registry.js';
 import type { KeeneticClient } from '../../src/router/client.js';
 import { stubBackup } from '../helpers/backup.js';
@@ -28,7 +28,7 @@ function harness(readOnly = false, payload: unknown = { title: '5.1.3' }) {
   }) as never);
 
   registerRawTool(server, ctx);
-  return { handlers, get, post };
+  return { handlers, get, post, backup: ctx.backup };
 }
 
 function text(result: ToolResult): string {
@@ -128,5 +128,41 @@ describe('rci_call', () => {
     const wide = text(await handlers['rci_call']!({ method: 'GET', path: 'p', max_bytes: 999_999 }));
     expect(tight.length).toBeLessThan(wide.length);
     expect(wide.length).toBeLessThan(4_000);
+  });
+});
+
+describe('rci_call takes a backup before it can change anything', () => {
+  it('snapshots the configuration before a command that is not a show', async () => {
+    const { handlers, post, backup } = harness();
+    await handlers['rci_call']!({ method: 'POST', body: { ip: { host: { domain: 'a.test' } } } });
+    expect(backup.ensure).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not for a show, which only reads', async () => {
+    const { handlers, backup } = harness();
+    await handlers['rci_call']!({ method: 'POST', body: { show: { version: {} } } });
+    await handlers['rci_call']!({ method: 'GET', path: 'show/version' });
+    expect(backup.ensure).not.toHaveBeenCalled();
+  });
+
+  it('does not send the command when the backup fails', async () => {
+    const { handlers, post, backup } = harness();
+    vi.mocked(backup.ensure).mockRejectedValueOnce(new Error('disk full'));
+    const result = await handlers['rci_call']!({ method: 'POST', body: { system: { reboot: {} } } });
+    expect(result.isError).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ show: { version: {} } }, true],
+    [[{ show: { version: {} } }, { show: { system: {} } }], true],
+    [{ show: { version: {} }, interface: { Bridge0: { up: true } } }, false],
+    [[{ show: { version: {} } }, { system: { configuration: { save: {} } } }], false],
+    [{}, false],
+    [[], false],
+    ['show version', false]
+  ])('classifies %j as read-only=%s', (body, expected) => {
+    expect(isReadOnlyBody(body)).toBe(expected);
   });
 });

@@ -56,3 +56,21 @@ describe('capText', () => {
     expect(out).toContain('5000');
   });
 });
+
+describe('capText with multi-byte text', () => {
+  // Device names and log lines on a Russian-language network: two bytes each.
+  const cyrillic = '\u041f\u044b\u043b\u0435\u0441\u043e\u0441 '.repeat(400);
+
+  it('holds the ceiling in bytes, not characters', () => {
+    const out = capText(cyrillic, 1_000);
+    const body = out.slice(0, out.indexOf('\n\n[truncated'));
+    expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(1_000);
+  });
+
+  it('never cuts a character in half', () => {
+    // An odd ceiling lands in the middle of a two-byte character.
+    for (const ceiling of [999, 1_000, 1_001]) {
+      expect(capText(cyrillic, ceiling)).not.toContain('\ufffd');
+    }
+  });
+});

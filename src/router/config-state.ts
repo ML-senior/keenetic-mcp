@@ -1,4 +1,5 @@
 import type { Rci } from './rci.js';
+import { asRecord } from '../shape/coerce.js';
 
 /** Where the router serves the saved configuration. Three callers need the path. */
 export const STARTUP_CONFIG = '/ci/startup-config.txt';
@@ -12,10 +13,6 @@ function parseDate(value: string | null): number | null {
   if (value === null) return null;
   const ms = Date.parse(value.replace(/\s+/g, ' '));
   return Number.isFinite(ms) ? ms : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 function asString(value: unknown): string | null {

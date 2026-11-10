@@ -1,5 +1,6 @@
 import { RciError, ValidationError } from './errors.js';
 import type { Rci } from './rci.js';
+import { asRecord } from '../shape/coerce.js';
 
 /** The home segment. Never allocated to a new network, never torn down. */
 export const HOME_BRIDGE = 'Bridge0';
@@ -16,12 +17,6 @@ const POOL_PREFIX = '_WEBADMIN_BRIDGE';
 /** The router keeps .1 for itself; the web interface hands out .33 to .152. */
 const DHCP_FIRST = 33;
 const DHCP_LAST = 152;
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 /** The router collapses a single-element list into a bare object. */
 function toArray(value: unknown): unknown[] {

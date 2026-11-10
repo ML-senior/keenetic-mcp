@@ -1,15 +1,12 @@
 import { RciError } from './errors.js';
 import type { Session } from './session.js';
+import { isRecord } from '../shape/coerce.js';
 
 export interface RciStatus {
   status: string;
   code?: string;
   ident?: string;
   message?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

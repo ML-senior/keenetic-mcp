@@ -1,11 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import { capList } from '../shape/budget.js';
-import { guard, ok, READ_ONLY, type ToolContext } from './registry.js';
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
+import { guard, listResult, ok, READ_ONLY, type ToolContext } from './registry.js';
+import { asEntries, asRecord, numOrNull, str } from '../shape/coerce.js';
 
 /**
  * The band of a radio. KeeneticOS 5.x does not put a `band` field on the
@@ -67,18 +63,10 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
       annotations: READ_ONLY
     },
     guard(async ({ kind, limit }) => {
-      const raw = await ctx.client.rci.get('show/ip/route');
-      const routes = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+      const routes = asEntries(await ctx.client.rci.get('show/ip/route'));
       const selected =
         kind === 'default' ? routes.filter(r => r['destination'] === '0.0.0.0/0') : routes;
-
-      const capped = capList(selected, limit ?? 100, ctx.maxResponseBytes);
-      return ok({
-        routes: capped.items,
-        shown: capped.shown,
-        total: capped.total,
-        ...(capped.note ? { note: capped.note } : {})
-      });
+      return listResult('routes', selected, limit ?? 100, ctx.maxResponseBytes);
     })
   );
 
@@ -97,15 +85,12 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
       const raw = asRecord(await ctx.client.rci.get('ip/policy'));
       const policies = Object.entries(raw).map(([name, value]) => {
         const policy = asRecord(value);
-        const permit = Array.isArray(policy['permit']) ? policy['permit'] : [];
-        const interfaces = permit
-          .map(entry => asRecord(entry)['interface'])
+        // asEntries: a single-element list may come back unwrapped, which
+        // delete_interface already allowed for and this listing did not.
+        const interfaces = asEntries(policy['permit'])
+          .map(entry => entry['interface'])
           .filter((id): id is string => typeof id === 'string');
-        return {
-          name,
-          description: typeof policy['description'] === 'string' ? policy['description'] : '',
-          interfaces
-        };
+        return { name, description: str(policy, 'description'), interfaces };
       });
       return ok({ policies });
     })
@@ -128,12 +113,11 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
         ctx.client.rci.get('show/associations')
       ]);
       const interfaces = asRecord(ifaceRaw);
-      const stationsRaw = asRecord(assocRaw)['station'];
-      const stations = Array.isArray(stationsRaw) ? stationsRaw.map(asRecord) : [];
+      const stations = asEntries(asRecord(assocRaw)['station']);
 
       const clientsPerAp = new Map<string, number>();
       for (const station of stations) {
-        const ap = typeof station['ap'] === 'string' ? station['ap'] : '';
+        const ap = str(station, 'ap');
         if (ap) clientsPerAp.set(ap, (clientsPerAp.get(ap) ?? 0) + 1);
       }
 
@@ -152,21 +136,21 @@ export function registerNetworkTools(server: McpServer, ctx: ToolContext): void 
               const ap = asRecord(apValue);
               return {
                 id: apId,
-                ssid: typeof ap['ssid'] === 'string' ? ap['ssid'] : '',
-                link: typeof ap['link'] === 'string' ? ap['link'] : '',
-                state: typeof ap['state'] === 'string' ? ap['state'] : '',
+                ssid: str(ap, 'ssid'),
+                link: str(ap, 'link'),
+                state: str(ap, 'state'),
                 clients: clientsPerAp.get(apId) ?? 0
               };
             });
 
-          const channel = typeof master['channel'] === 'number' ? master['channel'] : null;
+          const channel = numOrNull(master['channel']);
           return {
             radio: masterId,
             band: bandOf(master, channel),
             channel,
-            bandwidthMhz: master['bandwidth'] !== undefined ? Number(master['bandwidth']) : null,
-            temperatureC: typeof master['temperature'] === 'number' ? master['temperature'] : null,
-            description: typeof master['description'] === 'string' ? master['description'] : '',
+            bandwidthMhz: numOrNull(master['bandwidth']),
+            temperatureC: numOrNull(master['temperature']),
+            description: str(master, 'description'),
             accessPoints
           };
         });

@@ -160,6 +160,7 @@ stored config** (written by `init`).
 | `KEENETIC_PASSWORD` | — | *(keychain)* | Router password |
 | — | `--read-only` | off | Never register the write tools |
 | — | `--max-response-bytes` | `25000` | Cap on any tool response |
+| `KEENETIC_TIMEOUT_MS` | `--timeout-ms` | `10000` | Per-request timeout for the router API, 1000–120000 |
 | `KEENETIC_SSH` | `--ssh` | **off** (on if set up in `init`) | Enable the SSH/Entware tools; `0` turns a stored setup off |
 | `KEENETIC_SSH_PORT` | `--ssh-port` | `222` | Entware dropbear port. `22` is the KeeneticOS CLI, which is not a shell |
 | `KEENETIC_SSH_USER` | — | `root` | SSH user |
@@ -183,7 +184,7 @@ the SSH step of `init`) — except `ssh_check`, which only probes ports.
 
 | Tool | What it returns |
 |---|---|
-| `list_devices` | every device, filtered by active/wired/wireless/blocked, sorted by traffic, name, signal or last seen |
+| `list_devices` | every device, filtered by active/wired/wireless/blocked, searched by part of a name, IP or MAC, sorted by traffic, name, signal or last seen |
 | `get_device` | one device in full: lease, Wi-Fi rate, policy, schedule, traffic |
 | `list_interfaces` | WAN links, bridges, access points, VPN tunnels |
 | `get_interface` | one interface in full, including WireGuard peers |
@@ -230,14 +231,14 @@ the SSH step of `init`) — except `ssh_check`, which only probes ports.
 |---|---|
 | `ssh_exec` | run a shell command, get stdout, stderr and the exit code |
 | `ssh_read_file` | read a file, e.g. an Entware config under `/opt/etc` |
-| `ssh_write_file` | write under `/opt/` or `/tmp/` only; backs up the old file and verifies the md5 afterwards |
+| `ssh_write_file` | write under `/opt/` or `/tmp/` only; the new content is checksum-verified beside the target before it replaces it, and the old file is kept as a backup |
 | `opkg_manage` | `update` / `install` / `remove` / `list` / `list-installed` / `info` for Entware packages |
 
 ### 🪤 Escape hatch
 
 | Tool | What it does |
 |---|---|
-| `rci_call` | any router API path at all, for whatever the tools above do not cover |
+| `rci_call` | any router API path at all, for whatever the tools above do not cover; a POST that is not a pure `show` backs the configuration up first |
 
 ---
 

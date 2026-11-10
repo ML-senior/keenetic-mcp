@@ -2,21 +2,9 @@ import { execFile } from 'node:child_process';
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { readConfigState } from '../router/config-state.js';
-import { guard, ok, READ_ONLY, type ToolContext, type ToolResult } from './registry.js';
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function asEntries(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return value.filter(v => typeof v === 'object' && v !== null) as Array<Record<string, unknown>>;
-  }
-  if (typeof value === 'object' && value !== null) return [value as Record<string, unknown>];
-  return [];
-}
+import { ValidationError } from '../router/errors.js';
+import { fail, guard, ok, READ_ONLY, WRITE, type ToolContext, type ToolResult } from './registry.js';
+import { asEntries, asRecord, numOrNull, str, type Row } from '../shape/coerce.js';
 
 function mb(value: unknown): number | null {
   const n = Number(value);
@@ -27,6 +15,26 @@ function mb(value: unknown): number | null {
 async function fetchHotspotHosts(ctx: ToolContext): Promise<Array<Record<string, unknown>>> {
   const raw = asRecord(await ctx.client.rci.get('show/ip/hotspot'));
   return asEntries(raw['host']);
+}
+
+/**
+ * Mesh members as the controller's own Mesh subsystem reports them, keyed by
+ * MAC. This is where a member's `cid` lives - the id a client record points at
+ * to say which node it is associated with. Optional: a router without the mws
+ * component answers 404, and the listing then falls back to the hotspot table.
+ */
+async function fetchMeshMembers(ctx: ToolContext): Promise<Map<string, Row>> {
+  const members = new Map<string, Row>();
+  try {
+    const raw = asRecord(await ctx.client.rci.post({ show: { mws: { member: {} } } }));
+    for (const member of asEntries(asRecord(asRecord(raw['show'])['mws'])['member'])) {
+      const mac = str(member, 'mac').toLowerCase();
+      if (mac) members.set(mac, member);
+    }
+  } catch {
+    // Member detail is an enrichment; the node list does not depend on it.
+  }
+  return members;
 }
 
 function pingLocal(host: string, count: number): Promise<string> {
@@ -98,7 +106,7 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
       // execFile passes arguments without a shell, but a leading dash would be
       // read as a flag, and whitespace/control chars are never part of a host.
       if (!/^[a-z0-9.:_-]+$/i.test(trimmed) || trimmed.startsWith('-')) {
-        return { content: [{ type: 'text', text: `'${host}' is not a valid hostname or IP address.` }], isError: true };
+        return fail(new ValidationError(`'${host}' is not a valid hostname or IP address.`));
       }
       const output = await pingLocal(trimmed, count ?? 4);
       return ok({ host: trimmed, output }, ctx.maxResponseBytes);
@@ -155,14 +163,30 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
       annotations: READ_ONLY
     },
     guard(async () => {
-      const [hosts, versionRaw] = await Promise.all([
+      const [hosts, versionRaw, members] = await Promise.all([
         fetchHotspotHosts(ctx),
-        ctx.client.rci.get('show/version')
+        ctx.client.rci.get('show/version'),
+        fetchMeshMembers(ctx)
       ]);
       const version = asRecord(versionRaw);
 
       const clients = hosts.filter(h => h['active'] === true && !h['system-mode']);
       const extenders = hosts.filter(h => h['system-mode'] === 'extender');
+      const onExtender = clients.filter(h => h['mws-backhaul']);
+
+      // Which extender a client hangs off is its `mws.cid`. Every extender
+      // used to be credited with all of them, which is only right when there
+      // is exactly one - so that is now the fallback, not the rule.
+      const perCid = new Map<string, number>();
+      for (const client of onExtender) {
+        const cid = str(asRecord(client['mws']), 'cid');
+        if (cid) perCid.set(cid, (perCid.get(cid) ?? 0) + 1);
+      }
+      const clientsOf = (member: Row | undefined): number | null => {
+        const cid = member ? str(member, 'cid') : '';
+        if (cid) return perCid.get(cid) ?? 0;
+        return extenders.length === 1 ? onExtender.length : null;
+      };
 
       const nodes: Array<Record<string, unknown>> = [
         {
@@ -174,7 +198,9 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
         }
       ];
       for (const e of extenders) {
-        nodes.push({
+        const member = members.get(str(e, 'mac').toLowerCase());
+        const backhaul = asRecord(member?.['backhaul']);
+        const node: Row = {
           role: 'extender',
           name: e['name'] ?? '',
           model: e['description'] ?? '',
@@ -182,10 +208,20 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
           ip: e['ip'] ?? null,
           mac: e['mac'] ?? null,
           active: e['active'] === true,
-          connectionSpeedMbps: e['speed'] ?? null,
+          connectionSpeedMbps: e['speed'] ?? numOrNull(backhaul['speed']),
           uptimeSec: e['uptime'] ?? null,
-          activeClients: clients.filter(h => h['mws-backhaul']).length
-        });
+          activeClients: clientsOf(member)
+        };
+        if (member) {
+          // The interface the extender reaches the controller through: a
+          // switch port for a wired backhaul, a radio for a wireless one.
+          const uplink = str(backhaul, 'uplink');
+          if (uplink) node['backhaulUplink'] = uplink;
+          if (typeof member['internet-available'] === 'boolean') {
+            node['internetAvailable'] = member['internet-available'];
+          }
+        }
+        nodes.push(node);
       }
       return ok({ nodes, totalActiveClients: clients.length });
     })
@@ -260,7 +296,7 @@ export function registerDiagnosticsTools(server: McpServer, ctx: ToolContext): v
       inputSchema: {
         confirm: z.literal(true).describe('Must be true. Ask the user before setting it.')
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+      annotations: WRITE
     },
     guard(async () => {
       const state = await readConfigState(ctx.client.rci);

@@ -1,10 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { readConfigState } from '../router/config-state.js';
 import { guard, ok, READ_ONLY, type ToolContext } from './registry.js';
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
+import { asRecord } from '../shape/coerce.js';
 
 export function registerSystemTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(

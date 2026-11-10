@@ -155,6 +155,96 @@ describe('get_mesh_nodes', () => {
   });
 });
 
+describe('get_mesh_nodes with several extenders', () => {
+  const client = (name: string, cid: string) => ({
+    mac: `02:00:00:00:01:${name}`,
+    active: true,
+    name: `client-${name}`,
+    'mws-backhaul': true,
+    mws: { cid, ssid: 'ssid-1', rssi: -60 }
+  });
+  const extender = (mac: string, name: string) => ({
+    'system-mode': 'extender',
+    active: true,
+    name,
+    mac
+  });
+  const HOTSPOT = {
+    host: [
+      { mac: '02:00:00:00:00:01', active: true, name: 'on-controller' },
+      client('01', 'cid-hall'),
+      client('02', 'cid-hall'),
+      client('03', 'cid-attic'),
+      extender('02:00:00:00:00:e1', 'hall'),
+      extender('02:00:00:00:00:e2', 'attic')
+    ]
+  };
+  const MEMBERS = {
+    show: {
+      mws: {
+        member: [
+          {
+            mac: '02:00:00:00:00:E1',
+            cid: 'cid-hall',
+            'internet-available': true,
+            backhaul: { uplink: 'GigabitEthernet0/Vlan1', speed: '1000' }
+          },
+          { mac: '02:00:00:00:00:e2', cid: 'cid-attic', backhaul: { uplink: 'WifiMaster1/WifiStation0' } }
+        ]
+      }
+    }
+  };
+
+  function meshHarness(members: unknown): Handler {
+    const get = vi.fn(async (path: string) =>
+      path === 'show/ip/hotspot' ? HOTSPOT : { description: 'ctrl-1', hw_id: 'KN-1010' }
+    );
+    const post = vi.fn(async () => {
+      if (members instanceof Error) throw members;
+      return members;
+    });
+    const server = new McpServer({ name: 'test', version: '0.0.0' });
+    const handlers: Record<string, Handler> = {};
+    vi.spyOn(server, 'registerTool').mockImplementation(((n: string, _c: unknown, h: Handler) => {
+      handlers[n] = h;
+      return {} as never;
+    }) as never);
+    registerDiagnosticsTools(server, {
+      client: { rci: { get, post, getText: vi.fn() }, capabilities: vi.fn() } as unknown as KeeneticClient,
+      maxResponseBytes: 25_000,
+      readOnly: true,
+      backup: stubBackup()
+    });
+    return handlers['get_mesh_nodes']!;
+  }
+
+  it('credits each extender with its own clients, not with all of them', async () => {
+    const out = payload(await meshHarness(MEMBERS)({}));
+    const byName = Object.fromEntries(out.nodes.map((n: any) => [n.name, n]));
+    expect(byName['hall'].activeClients).toBe(2);
+    expect(byName['attic'].activeClients).toBe(1);
+    expect(out.nodes[0]).toMatchObject({ role: 'controller', activeClients: 1 });
+    expect(out.totalActiveClients).toBe(4);
+  });
+
+  it('adds what the Mesh subsystem knows about a member', async () => {
+    const out = payload(await meshHarness(MEMBERS)({}));
+    const hall = out.nodes.find((n: any) => n.name === 'hall');
+    expect(hall).toMatchObject({
+      backhaulUplink: 'GigabitEthernet0/Vlan1',
+      connectionSpeedMbps: 1000,
+      internetAvailable: true
+    });
+  });
+
+  it('says it cannot tell rather than guessing, when member detail is unavailable', async () => {
+    const out = payload(await meshHarness(new Error('404'))({}));
+    expect(out.nodes).toHaveLength(3);
+    expect(out.nodes[1].activeClients).toBeNull();
+    expect(out.nodes[2].activeClients).toBeNull();
+  });
+});
+
 describe('get_media', () => {
   it('flattens partitions with sizes in MB', async () => {
     const out = payload(await harness().handlers['get_media']!({}));

@@ -21,3 +21,6 @@ scratch/
 # Throwaway probes written against a live router, which is where captured
 # addresses and keys turn up before anyone means to commit them.
 scratch-*
+
+# Router configuration backups: they carry keys and password hashes.
+backup-*.txt

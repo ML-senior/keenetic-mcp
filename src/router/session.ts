@@ -157,7 +157,30 @@ function parseNdw4Data(res: Response, phase: string): Record<string, unknown> {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+export const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * What actually went wrong with a fetch.
+ *
+ * Node reports every network failure as `TypeError: fetch failed` and puts the
+ * reason - ECONNREFUSED, EHOSTUNREACH, a DNS miss - on `cause`. Reporting only
+ * the message told the reader that the request failed, which they knew.
+ */
+function describeFetchFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+    return 'the router did not answer in time';
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: unknown }).code;
+    const detail = typeof code === 'string' && !cause.message.includes(code)
+      ? `${code} ${cause.message}`
+      : cause.message;
+    return detail ? `${error.message} (${detail.trim()})` : error.message;
+  }
+  return error.message;
+}
 
 export class Session {
   private readonly opts: SessionOptions;
@@ -178,6 +201,11 @@ export class Session {
   async request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Response> {
     const first = await this.send(method, path, body);
     if (first.status !== 401) return first;
+
+    // Nobody reads the body of the 401. Left unread, it pins its connection
+    // until the garbage collector gets to it; with a session that expires
+    // every five idle minutes that is one stranded socket per agent turn.
+    await first.body?.cancel().catch(() => undefined);
 
     await this.ensureAuthenticated();
 
@@ -222,7 +250,7 @@ export class Session {
     try {
       res = await fetch(url, init);
     } catch (cause) {
-      throw new TransportError(`${method} ${url} failed: ${(cause as Error).message}.`);
+      throw new TransportError(`${method} ${url} failed: ${describeFetchFailure(cause)}.`);
     }
     this.captureCookie(res);
     return res;

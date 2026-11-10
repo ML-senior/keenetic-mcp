@@ -2,55 +2,13 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { fail, guard, ok, READ_ONLY, type ToolContext, type ToolResult } from './registry.js';
 import { describeWrite, verifiedWrite } from './write.js';
+import { ValidationError } from '../router/errors.js';
 
-type Row = Record<string, unknown>;
-
-function asRecord(value: unknown): Row {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Row)
-    : {};
-}
-
-/**
- * A config branch with one surviving record often comes back as a bare object
- * instead of a one-element array - the router unwraps it. Normalize both.
- */
-function asEntries(value: unknown): Row[] {
-  if (Array.isArray(value)) return value.filter(v => typeof v === 'object' && v !== null) as Row[];
-  if (typeof value === 'object' && value !== null) return [value as Row];
-  return [];
-}
-
-const MAC_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/;
-const IP_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
-const DOMAIN_RE =
-  /^(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/i;
+import { asEntries, asRecord, type Row } from '../shape/coerce.js';
+import { checkIPv4, checkPort, isIPv4, isMac, normDomain, normMac } from '../shape/validate.js';
 
 /** KeeneticOS caps static `ip host` records at 64 (command reference). */
 const DNS_HOST_LIMIT = 64;
-
-function normMac(value: string): string {
-  const mac = value.trim().toLowerCase().replace(/-/g, ':');
-  if (!MAC_RE.test(mac)) {
-    throw new Error(`'${value}' is not a MAC address (expected aa:bb:cc:dd:ee:ff).`);
-  }
-  return mac;
-}
-
-function normDomain(value: string): string {
-  const domain = value.trim().replace(/\.$/, '').toLowerCase();
-  if (!DOMAIN_RE.test(domain)) {
-    throw new Error(`'${value}' is not a valid domain name.`);
-  }
-  return domain;
-}
-
-function checkPort(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > 65535) {
-    throw new Error(`port ${String(value)} is out of range (1-65535).`);
-  }
-  return value;
-}
 
 /**
  * Port forwarding targets a MAC, never an IP. Accept either and resolve,
@@ -59,9 +17,9 @@ function checkPort(value: number): number {
  */
 async function resolveToHost(ctx: ToolContext, value: string): Promise<string> {
   const cleaned = value.trim().toLowerCase();
-  if (MAC_RE.test(cleaned.replace(/-/g, ':'))) return normMac(cleaned);
-  if (!IP_RE.test(cleaned)) {
-    throw new Error(`'${value}' is neither a MAC nor an IPv4 address.`);
+  if (isMac(cleaned)) return normMac(cleaned);
+  if (!isIPv4(cleaned)) {
+    throw new ValidationError(`'${value}' is neither a MAC nor an IPv4 address.`);
   }
   const dhcp = asEntries(await ctx.client.rci.get('ip/dhcp/host'));
   for (const entry of dhcp) {
@@ -132,7 +90,7 @@ function describeTarget(directory: Map<string, HostInfo>, value: unknown): HostI
   for (const info of directory.values()) {
     if (info.ip === value) return info;
   }
-  return MAC_RE.test(key) ? { name: null, ip: null, active: false } : null;
+  return isMac(key) ? { name: null, ip: null, active: false } : null;
 }
 
 async function fetchStaticRules(ctx: ToolContext): Promise<Row[]> {
@@ -539,7 +497,7 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
     },
     guard(async ({ domain, address }): Promise<ToolResult> => {
       const name = normDomain(domain);
-      if (!IP_RE.test(address)) return fail(new Error(`'${address}' is not an IPv4 address.`));
+      checkIPv4(address);
 
       const hosts = asEntries(await ctx.client.rci.get('ip/host'));
       const sameName = hosts.filter(
@@ -652,7 +610,7 @@ export function registerServiceTools(server: McpServer, ctx: ToolContext): void 
     },
     guard(async ({ mac, ip }): Promise<ToolResult> => {
       const normalizedMac = normMac(mac);
-      if (!IP_RE.test(ip)) return fail(new Error(`'${ip}' is not an IPv4 address.`));
+      checkIPv4(ip);
 
       const existing = asEntries(await ctx.client.rci.get('ip/dhcp/host'));
       const conflict = existing.find(e => e['ip'] === ip && e['mac'] !== normalizedMac);

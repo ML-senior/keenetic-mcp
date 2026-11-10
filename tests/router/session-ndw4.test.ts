@@ -101,13 +101,13 @@ describe('Session over NDW4 (KeeneticOS 5.x)', () => {
     let clientNonceB64 = '';
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
-      calls.push({ url: u, init });
+      calls.push(init === undefined ? { url: u } : { url: u, init });
 
       if (u.endsWith('/auth') && init?.method === 'POST') {
         authPhase += 1;
         const body = JSON.parse(String(init!.body)) as Record<string, string>;
         if (authPhase === 1) {
-          clientNonceB64 = body.nonce;
+          clientNonceB64 = body['nonce'] ?? '';
           return ndw4ChallengeResponse();
         }
         const secrets = await deriveNdw4Secrets(LOGIN, PASSWORD, clientNonceB64, {
@@ -158,14 +158,15 @@ describe('Session over NDW4 (KeeneticOS 5.x)', () => {
     expect(res.status).toBe(200);
     const posts = authPosts(calls);
     expect(posts).toHaveLength(3);
-    expect(posts[0].body).toEqual({ login: LOGIN, nonce: expect.any(String) });
+    const [first, second, third] = posts as [AuthPost, AuthPost, AuthPost];
+    expect(first.body).toEqual({ login: LOGIN, nonce: expect.any(String) });
     // The client nonce is 16 random bytes, base64-encoded.
-    expect(Buffer.from(posts[0].body.nonce, 'base64')).toHaveLength(16);
-    expect(posts[1].body.login).toBe(LOGIN);
-    expect(posts[1].body.nonce).toBe(SERVER_NONCE);
-    expect(typeof posts[1].body.proof).toBe('string');
-    expect(posts[2].body.nonce).toBe(SERVER_NONCE);
-    expect(typeof posts[2].body['signature-proof']).toBe('string');
+    expect(Buffer.from(first.body['nonce'] ?? '', 'base64')).toHaveLength(16);
+    expect(second.body['login']).toBe(LOGIN);
+    expect(second.body['nonce']).toBe(SERVER_NONCE);
+    expect(typeof second.body['proof']).toBe('string');
+    expect(third.body['nonce']).toBe(SERVER_NONCE);
+    expect(typeof third.body['signature-proof']).toBe('string');
     // NDW2 must not be attempted once NDW4 succeeds.
     expect(posts.some(p => 'password' in p.body)).toBe(false);
   });
@@ -179,7 +180,7 @@ describe('Session over NDW4 (KeeneticOS 5.x)', () => {
         const body = JSON.parse(String(init!.body)) as Record<string, string>;
         bodies.push(body);
         if ('nonce' in body && !('proof' in body)) {
-          clientNonceB64 = body.nonce;
+          clientNonceB64 = body['nonce'] ?? '';
           return ndw4ChallengeResponse();
         }
         // A signature derived from a DIFFERENT password: what a wrong password
@@ -260,7 +261,7 @@ describe('Session over NDW4 (KeeneticOS 5.x)', () => {
         phase += 1;
         if (phase === 1) {
           const body = JSON.parse(String(init!.body)) as Record<string, string>;
-          clientNonceB64 = body.nonce;
+          clientNonceB64 = body['nonce'] ?? '';
           return ndw4ChallengeResponse();
         }
         if (phase === 2) {

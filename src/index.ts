@@ -9,6 +9,7 @@ import { loadConfig, type StoredCredentials } from './config/load.js';
 import { createSecretStore, spawnRunner } from './config/secrets.js';
 import { createBackupGuard } from './router/backup.js';
 import { createClient } from './router/client.js';
+import type { SessionOptions } from './router/session.js';
 import { createSshClient } from './ssh/client.js';
 import { registerConfigTools } from './tools/config.js';
 import { registerDeviceTools } from './tools/devices.js';
@@ -83,11 +84,13 @@ async function main(): Promise<void> {
   }
 
   const config = await loadConfig(process.argv.slice(2), process.env, stored);
-  const client = createClient({
+  const sessionOptions: SessionOptions = {
     host: config.host,
     login: config.login,
     password: config.password
-  });
+  };
+  if (config.timeoutMs !== undefined) sessionOptions.timeoutMs = config.timeoutMs;
+  const client = createClient(sessionOptions);
   // host may carry an HTTP port ("192.168.1.1:8080"); SSH wants the bare host.
   const bareHost = sshHost(config.host);
   const ctx: ToolContext = {

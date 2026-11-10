@@ -28,6 +28,8 @@ export interface AppConfig {
   password: string;
   readOnly: boolean;
   maxResponseBytes: number;
+  /** Per-request HTTP timeout. Absent means the session default. */
+  timeoutMs?: number;
   /** Present only when shell access was explicitly enabled. */
   ssh: SshConfig | null;
 }
@@ -100,6 +102,19 @@ export async function loadConfig(
     throw new Error(`--max-response-bytes must be a positive integer, got "${rawMax}"`);
   }
 
+  // A router on a slow link, or one busy saving, can take longer than the
+  // default to answer; this is the knob for that, not a reason to patch code.
+  const rawTimeout = env['KEENETIC_TIMEOUT_MS'] ?? flagValue(argv, '--timeout-ms');
+  let timeoutMs: number | undefined;
+  if (rawTimeout !== undefined && rawTimeout.trim() !== '') {
+    timeoutMs = Number(rawTimeout);
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120_000) {
+      throw new Error(
+        `The request timeout must be a whole number of milliseconds from 1000 to 120000, got "${rawTimeout}"`
+      );
+    }
+  }
+
   if (!host || !password) {
     throw new Error(
       'No router configured. Run "node dist/index.js init" to set one up, or set ' +
@@ -155,7 +170,7 @@ export async function loadConfig(
     }
   }
 
-  return {
+  const config: AppConfig = {
     host,
     login,
     password,
@@ -163,4 +178,6 @@ export async function loadConfig(
     maxResponseBytes: parsedMax,
     ssh
   };
+  if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
+  return config;
 }

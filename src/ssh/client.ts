@@ -90,9 +90,50 @@ export function probePort(host: string, port: number, timeoutMs = 3000): Promise
   });
 }
 
+export interface SshExecOptions {
+  /** Written to the command's standard input, which is then closed. */
+  stdin?: string;
+}
+
 /** The seam the tool layer depends on. Tests substitute a plain object. */
 export interface SshClient {
-  exec(command: string, timeoutMs: number): Promise<SshExecResult>;
+  exec(command: string, timeoutMs: number, options?: SshExecOptions): Promise<SshExecResult>;
+}
+
+/**
+ * How much of each stream is kept. A command is free to print more - `logread`
+ * on a busy router, `cat` of the wrong file - but the tool layer caps what it
+ * returns at a few tens of kilobytes anyway, and buffering the rest only to
+ * throw it away is how a stray `cat /dev/zero` would take the server down.
+ */
+export const MAX_STREAM_BYTES = 2 * 1024 * 1024;
+
+/** Collects a stream up to a byte ceiling and says so when it stops. */
+function collector(limit: number): { push(chunk: Buffer): void; text(): string } {
+  const chunks: Buffer[] = [];
+  let kept = 0;
+  let dropped = 0;
+  return {
+    push(chunk: Buffer): void {
+      const room = limit - kept;
+      if (room <= 0) {
+        dropped += chunk.length;
+        return;
+      }
+      const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
+      chunks.push(part);
+      kept += part.length;
+      dropped += chunk.length - part.length;
+    },
+    text(): string {
+      // Decoded once at the end: decoding chunk by chunk splits any multi-byte
+      // character that straddles a packet boundary into two replacement marks.
+      const text = Buffer.concat(chunks).toString('utf8');
+      return dropped > 0
+        ? `${text}\n[output truncated: ${String(dropped)} more bytes were discarded]`
+        : text;
+    }
+  };
 }
 
 /**
@@ -120,25 +161,34 @@ export function connectConfig(opts: SshClientOptions): ConnectConfig {
 
 export function createSshClient(opts: SshClientOptions): SshClient {
   return {
-    exec(command: string, timeoutMs: number): Promise<SshExecResult> {
+    exec(command: string, timeoutMs: number, options: SshExecOptions = {}): Promise<SshExecResult> {
       return new Promise((resolve, reject) => {
         const conn = new Client();
+        const stdout = collector(MAX_STREAM_BYTES);
+        const stderr = collector(MAX_STREAM_BYTES);
         let settled = false;
 
-        const timer = setTimeout(() => {
+        // One exit for every outcome, so the timer and the socket are released
+        // exactly once whichever event gets there first.
+        const settle = (outcome: { result: SshExecResult } | { error: Error }): void => {
           if (settled) return;
           settled = true;
-          conn.end();
-          reject(
-            new Error(
+          clearTimeout(timer);
+          // destroy, not end: end waits for the far side to close, and a
+          // command that is still running (the timeout case) never does.
+          conn.destroy();
+          if ('error' in outcome) reject(outcome.error);
+          else resolve(outcome.result);
+        };
+
+        const timer = setTimeout(() => {
+          settle({
+            error: new Error(
               `SSH command timed out after ${String(timeoutMs)} ms. The router may still be ` +
                 'running it - check before retrying (e.g. ssh_exec "ps | grep opkg").'
             )
-          );
+          });
         }, timeoutMs);
-
-        let stdout = '';
-        let stderr = '';
 
         conn
           .on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
@@ -148,38 +198,29 @@ export function createSshClient(opts: SshClientOptions): SshClient {
           .on('ready', () => {
             conn.exec(command, (err, stream) => {
               if (err) {
-                if (!settled) {
-                  settled = true;
-                  clearTimeout(timer);
-                  conn.end();
-                  reject(err);
-                }
+                settle({ error: err });
                 return;
               }
-              let code: number | null = null;
-              stream.on('data', (d: Buffer) => {
-                stdout += d.toString('utf8');
-              });
-              stream.stderr.on('data', (d: Buffer) => {
-                stderr += d.toString('utf8');
-              });
+              stream.on('data', (d: Buffer) => stdout.push(d));
+              stream.stderr.on('data', (d: Buffer) => stderr.push(d));
               stream.on('close', (exitCode: number | null) => {
-                code = exitCode;
-                if (!settled) {
-                  settled = true;
-                  clearTimeout(timer);
-                  conn.end();
-                  resolve({ stdout, stderr, code });
-                }
+                settle({ result: { stdout: stdout.text(), stderr: stderr.text(), code: exitCode } });
               });
+              if (options.stdin !== undefined) stream.end(options.stdin);
             });
           })
           .on('error', (err: Error) => {
-            if (!settled) {
-              settled = true;
-              clearTimeout(timer);
-              reject(new Error(explainSshError(opts, err.message)));
-            }
+            settle({ error: new Error(explainSshError(opts, err.message)) });
+          })
+          // A connection that drops without an error and without the command
+          // finishing - the router rebooting under it, dropbear being
+          // restarted - used to leave the caller waiting out the full timeout.
+          .on('close', () => {
+            settle({
+              error: new Error(
+                explainSshError(opts, 'the connection closed before the command finished')
+              )
+            });
           })
           .connect(connectConfig(opts));
       });

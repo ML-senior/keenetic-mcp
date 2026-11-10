@@ -2,7 +2,7 @@ import { KeeneticError } from '../router/errors.js';
 import type { BackupGuard } from '../router/backup.js';
 import type { KeeneticClient } from '../router/client.js';
 import type { SshClient } from '../ssh/client.js';
-import { capText } from '../shape/budget.js';
+import { capList, capText } from '../shape/budget.js';
 
 export interface ToolContext {
   client: KeeneticClient;
@@ -42,13 +42,36 @@ export function ok(payload: unknown, maxBytes?: number): ToolResult {
  * it must say what happened and what to do next - never a bare stack trace.
  */
 export function fail(error: unknown): ToolResult {
+  // A KeeneticError already ends with its own guidance; anything else is
+  // unexpected, and the generic advice is the best that can be said about it.
   const text =
     error instanceof KeeneticError
       ? error.message
-      : error instanceof Error
-        ? `${error.message} Retry, or call get_system_info to check connectivity.`
-        : `${String(error)} Retry, or call get_system_info to check connectivity.`;
+      : `${error instanceof Error ? error.message : String(error)} ` +
+        'Retry, or call get_system_info to check connectivity.';
   return { content: [{ type: 'text', text }], isError: true };
+}
+
+/**
+ * The shape every listing tool answers with: the rows under a name of the
+ * caller's choosing, how many are shown out of how many, and a note when the
+ * item limit or the byte ceiling cut the list short.
+ */
+export function listResult<T>(
+  key: string,
+  rows: readonly T[],
+  limit: number,
+  maxBytes: number,
+  extra: Record<string, unknown> = {}
+): ToolResult {
+  const capped = capList(rows, limit, maxBytes);
+  return ok({
+    [key]: capped.items,
+    shown: capped.shown,
+    total: capped.total,
+    ...extra,
+    ...(capped.note ? { note: capped.note } : {})
+  });
 }
 
 /** Wraps a handler so it can never reject - the SDK expects a result, not a throw. */
@@ -65,6 +88,8 @@ export function guard<A>(
 }
 
 export const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+/** A change that can be repeated without piling up: set X to Y, remove Z. */
+export const WRITE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true } as const;
 
 /**
  * A note on `inputSchema`.

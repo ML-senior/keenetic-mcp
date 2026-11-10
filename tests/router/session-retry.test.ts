@@ -117,3 +117,33 @@ describe('Session retry behaviour', () => {
     expect(authPosts).toBe(2);
   });
 });
+
+describe('Session transport errors', () => {
+  it('says why the connection failed, not just that it did', async () => {
+    // What Node actually throws: the reason is on `cause`, not in the message.
+    const refused = Object.assign(new Error('connect ECONNREFUSED 192.0.2.1:80'), {
+      code: 'ECONNREFUSED'
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed', { cause: refused });
+      })
+    );
+    await expect(new Session(BASE).request('GET', '/rci/show/version')).rejects.toThrow(
+      /ECONNREFUSED/
+    );
+  });
+
+  it('names a timeout as one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      })
+    );
+    await expect(new Session(BASE).request('GET', '/rci/show/version')).rejects.toThrow(
+      /did not answer in time/
+    );
+  });
+});

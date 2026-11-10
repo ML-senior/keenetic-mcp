@@ -13,6 +13,8 @@ const HOSTS = {
       mac: '02:00:00:00:00:01',
       ip: '192.0.2.5',
       name: 'device-1',
+      hostname: 'Kitchen-TV',
+      'last-seen': 40,
       active: true,
       ssid: 'ssid-1',
       rssi: -36,
@@ -25,6 +27,7 @@ const HOSTS = {
       mac: '02:00:00:00:00:02',
       ip: '192.0.2.6',
       name: 'device-2',
+      'last-seen': 3,
       active: true,
       rxbytes: 50,
       txbytes: 10,
@@ -75,7 +78,18 @@ describe('list_devices', () => {
     const out = payload(await harness()['list_devices']!({}));
     expect(out.devices).toHaveLength(3);
     expect(Object.keys(out.devices[0]).sort()).toEqual(
-      ['active', 'blocked', 'connection', 'ip', 'mac', 'name', 'rssi', 'rxBytes', 'txBytes'].sort()
+      [
+        'active',
+        'blocked',
+        'connection',
+        'ip',
+        'lastSeenSec',
+        'mac',
+        'name',
+        'rssi',
+        'rxBytes',
+        'txBytes'
+      ].sort()
     );
   });
 
@@ -139,5 +153,56 @@ describe('get_device', () => {
   it('returns isError when no identifier is supplied', async () => {
     const result = await harness()['get_device']!({});
     expect(result.isError).toBe(true);
+  });
+});
+
+describe('list_devices search and last_seen', () => {
+  it('finds a device by part of its hostname, whatever the case', async () => {
+    const out = payload(await harness()['list_devices']!({ search: 'kitchen' }));
+    expect(out.devices.map((d: any) => d.name)).toEqual(['device-1']);
+    expect(out.total).toBe(1);
+  });
+
+  it('finds a device by part of its address', async () => {
+    const out = payload(await harness()['list_devices']!({ search: '192.0.2.7' }));
+    expect(out.devices.map((d: any) => d.name)).toEqual(['device-3']);
+  });
+
+  it('orders by how recently each device was heard from', async () => {
+    const out = payload(await harness()['list_devices']!({ sort: 'last_seen' }));
+    // 3 s ago, 40 s ago, then the one the router gives no time for.
+    expect(out.devices.map((d: any) => d.name)).toEqual(['device-2', 'device-1', 'device-3']);
+  });
+});
+
+describe('get_device matching', () => {
+  it('matches a name without regard to case', async () => {
+    const out = payload(await harness()['get_device']!({ name: 'DEVICE-2' }));
+    expect(out.mac).toBe('02:00:00:00:00:02');
+  });
+
+  it('accepts a MAC in any notation', async () => {
+    const out = payload(await harness()['get_device']!({ mac: '02-00-00-00-00-03' }));
+    expect(out.name).toBe('device-3');
+  });
+
+  it('accepts a partial name that points at one device', async () => {
+    const out = payload(await harness()['get_device']!({ name: 'kitchen' }));
+    expect(out.mac).toBe('02:00:00:00:00:01');
+  });
+
+  it('refuses a partial name that points at several, and lists them', async () => {
+    const result = await harness()['get_device']!({ name: 'device' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/3 devices match/);
+    expect(result.content[0]!.text).toContain('02:00:00:00:00:02');
+  });
+});
+
+describe('update_device MAC handling', () => {
+  it('refuses something that is not a MAC before touching the router', async () => {
+    const result = await harness()['update_device']!({ mac: 'not-a-mac', name: 'x' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/not a MAC address/);
   });
 });

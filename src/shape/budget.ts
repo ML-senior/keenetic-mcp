@@ -41,8 +41,24 @@ export function capList<T>(items: readonly T[], limit: number, maxBytes: number)
   return result;
 }
 
+/**
+ * Cuts text to a byte ceiling, never through the middle of a character.
+ *
+ * The ceiling is in bytes because that is what the operator configured, and
+ * the cut used to be made in characters. For ASCII the two agree; for a
+ * network whose devices are named in Cyrillic every character is two bytes, so
+ * a "25 KB" response went out at up to twice that.
+ */
 export function capText(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
-  const head = text.slice(0, maxBytes);
-  return `${head}\n\n[truncated: ${text.length} characters total, showing the first ${head.length}]`;
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+
+  let end = Math.max(0, maxBytes);
+  // A UTF-8 continuation byte is 10xxxxxx; back up to the start of the character.
+  while (end > 0 && ((bytes[end] as number) & 0xc0) === 0x80) end -= 1;
+  const head = bytes.subarray(0, end).toString('utf8');
+  return (
+    `${head}\n\n[truncated: ${String(bytes.length)} bytes total, showing the first ` +
+    `${String(end)}. Narrow the request to see the rest.]`
+  );
 }

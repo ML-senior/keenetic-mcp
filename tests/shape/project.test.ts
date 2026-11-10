@@ -34,7 +34,18 @@ describe('projectDevice', () => {
   it('keeps only the summary fields', () => {
     const out = projectDevice(WIRELESS_HOST);
     expect(Object.keys(out).sort()).toEqual(
-      ['active', 'blocked', 'connection', 'ip', 'mac', 'name', 'rssi', 'rxBytes', 'txBytes'].sort()
+      [
+        'active',
+        'blocked',
+        'connection',
+        'ip',
+        'lastSeenSec',
+        'mac',
+        'name',
+        'rssi',
+        'rxBytes',
+        'txBytes'
+      ].sort()
     );
   });
 
@@ -99,5 +110,43 @@ describe('projectInterface', () => {
       address: '',
       defaultGateway: false
     });
+  });
+});
+
+/**
+ * Measured on a KN-1810 controller with a KN-3810 extender, KeeneticOS 5.2:
+ * a client associated with the extender has no top-level `ssid` or `rssi`.
+ * They sit under `mws`, next to the id of the node it hangs off.
+ */
+describe('projectDevice for a client on a Mesh extender', () => {
+  const MESH_CLIENT = {
+    mac: '02:00:00:00:00:21',
+    ip: '192.0.2.21',
+    name: 'device-21',
+    'mws-backhaul': true,
+    interface: { id: 'Bridge0', name: 'Home' },
+    active: true,
+    rxbytes: 1,
+    txbytes: 2,
+    mws: { cid: 'cid-1', ap: 'WifiMaster0/AccessPoint0', rssi: -56, ssid: 'ssid-1' },
+    'last-seen': 8
+  };
+
+  it('is wireless, not wired', () => {
+    expect(projectDevice(MESH_CLIENT).connection).toBe('wifi:ssid-1');
+  });
+
+  it('carries the signal the extender measured', () => {
+    expect(projectDevice(MESH_CLIENT).rssi).toBe(-56);
+  });
+
+  it('is marked as reaching the network through an extender', () => {
+    expect(projectDevice(MESH_CLIENT).viaExtender).toBe(true);
+    expect('viaExtender' in projectDevice({ mac: '02:00:00:00:00:22', ssid: 'ssid-1' })).toBe(false);
+  });
+
+  it('reports how long ago the device was last heard from', () => {
+    expect(projectDevice(MESH_CLIENT).lastSeenSec).toBe(8);
+    expect(projectDevice({ mac: '02:00:00:00:00:22' }).lastSeenSec).toBeNull();
   });
 });

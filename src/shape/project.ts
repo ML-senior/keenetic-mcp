@@ -1,3 +1,5 @@
+import { asRecord, bool, num, numOrNull, str } from './coerce.js';
+
 export interface DeviceSummary {
   mac: string;
   ip: string;
@@ -8,6 +10,10 @@ export interface DeviceSummary {
   rxBytes: number;
   txBytes: number;
   blocked: boolean;
+  /** Seconds since the router last heard from it; null when it does not say. */
+  lastSeenSec: number | null;
+  /** Present only for a client hanging off a Mesh extender rather than the controller. */
+  viaExtender?: true;
 }
 
 export interface InterfaceSummary {
@@ -27,26 +33,8 @@ export interface InterfaceSummary {
   };
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function str(source: Record<string, unknown>, key: string): string {
-  const value = source[key];
-  return typeof value === 'string' ? value : '';
-}
-
-function num(source: Record<string, unknown>, key: string): number {
-  const value = source[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function bool(source: Record<string, unknown>, key: string): boolean {
-  return source[key] === true;
-}
-
 /**
- * Nine fields out of roughly forty. The raw hotspot listing is 10.7 KB for nine
+ * Ten fields out of roughly forty. The raw hotspot listing is 10.7 KB for nine
  * hosts; almost all of it is noise for "who is on my network".
  *
  * No band label here: deriving 2.4 vs 5 GHz from the WifiMaster index is a
@@ -56,11 +44,18 @@ function bool(source: Record<string, unknown>, key: string): boolean {
 export function projectDevice(host: unknown): DeviceSummary {
   const h = asRecord(host);
   const iface = asRecord(h['interface']);
-  const ssid = str(h, 'ssid');
+  // A client associated with a Mesh extender carries its radio details one
+  // level down, under `mws`, and nothing at the top level (measured on a
+  // KN-1810 with a KN-3810 extender, KeeneticOS 5.2). Reading only the top
+  // level reported every such client as wired, with no signal strength.
+  const mesh = asRecord(h['mws']);
+  const viaExtender = typeof mesh['ssid'] === 'string' && mesh['ssid'] !== '';
+  const radio = str(h, 'ssid') ? h : mesh;
+  const ssid = str(radio, 'ssid');
   const ifaceLabel = str(iface, 'name') || str(iface, 'id');
-  const rssiRaw = h['rssi'];
+  const rssiRaw = radio['rssi'];
 
-  return {
+  const summary: DeviceSummary = {
     mac: str(h, 'mac'),
     ip: str(h, 'ip'),
     name: str(h, 'name') || str(h, 'hostname') || str(h, 'mac'),
@@ -69,8 +64,11 @@ export function projectDevice(host: unknown): DeviceSummary {
     active: bool(h, 'active'),
     rxBytes: num(h, 'rxbytes'),
     txBytes: num(h, 'txbytes'),
-    blocked: str(h, 'access') === 'deny'
+    blocked: str(h, 'access') === 'deny',
+    lastSeenSec: numOrNull(h['last-seen'])
   };
+  if (viaExtender && !str(h, 'ssid')) summary.viaExtender = true;
+  return summary;
 }
 
 /**
@@ -81,7 +79,7 @@ export function projectDevice(host: unknown): DeviceSummary {
  */
 function projectPort(i: Record<string, unknown>): NonNullable<InterfaceSummary['port']> {
   const rciName = str(i, 'id');
-  const speed = Number(i['speed']);
+  const speed = numOrNull(i['speed']) ?? Number.NaN;
   return {
     rciName,
     role: rciName.startsWith('GigabitEthernet0/') ? 'lan' : 'wan',

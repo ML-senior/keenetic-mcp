@@ -12,6 +12,42 @@ function md5(text: string): string {
   return createHash('md5').update(text, 'utf8').digest('hex');
 }
 
+/**
+ * The shell script behind ssh_write_file. The new content arrives on stdin.
+ *
+ * Written beside the target, verified there, and only then moved into place.
+ * The file used to be overwritten first and checked afterwards, so a write cut
+ * short by a full disk or a dropped connection left a truncated config where a
+ * working one had been - and the content rode in on the command line, which
+ * the shell caps well below the size of a large config.
+ *
+ * Exit codes: 3 the content arrived damaged, 4 the temporary file could not be
+ * written, 5 the backup failed, 6 the final move failed. In every one of those
+ * the original file is as it was. On success the last line is the checksum.
+ *
+ * The paths are quoted directly: the caller has already refused anything
+ * containing a quote or a newline. Plain POSIX sh - this runs under BusyBox.
+ */
+export function buildWriteScript(
+  path: string,
+  tempPath: string,
+  backupPath: string,
+  expectedMd5: string
+): string {
+  return [
+    `p='${path}'; t='${tempPath}'; b='${backupPath}'`,
+    // Copying the old file first carries its mode and owner over to the new one.
+    'if [ -f "$p" ]; then cp -p "$p" "$t" || exit 4; fi',
+    'cat > "$t" || { rm -f "$t"; exit 4; }',
+    `sum=$(md5sum "$t" | cut -d' ' -f1)`,
+    `if [ "$sum" != '${expectedMd5}' ]; then rm -f "$t"; echo "$sum"; exit 3; fi`,
+    'if [ -f "$p" ]; then cp -p "$p" "$b" || { rm -f "$t"; exit 5; }; echo BACKED_UP; fi',
+    // mv would replace a symlink with a regular file; write through it instead.
+    'if [ -L "$p" ]; then cat "$t" > "$p" && rm -f "$t"; else mv -f "$t" "$p"; fi || exit 6',
+    'echo "$sum"'
+  ].join('\n');
+}
+
 async function runChecked(
   ssh: SshClient,
   command: string,
@@ -94,7 +130,8 @@ export function registerSshTools(server: McpServer, ctx: ToolContext): void {
       if (probe.code !== 0) {
         return fail(new Error(`'${path}' does not exist or is not a regular file on the router.`));
       }
-      const bytes = Number.parseInt(probe.stdout.trim(), 10);
+      const parsedBytes = Number.parseInt(probe.stdout.trim(), 10);
+      const bytes = Number.isFinite(parsedBytes) ? parsedBytes : null;
       const result = await ssh.exec(`cat '${path}'`, DEFAULT_TIMEOUT_MS);
       if (result.code !== 0) {
         return fail(new Error(`Could not read '${path}': ${result.stderr.trim()}`));
@@ -111,10 +148,10 @@ export function registerSshTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Write a file on the router',
       description:
-        'Writes a file over SSH, restricted to /opt/ and /tmp/. If the file exists, a ' +
-        'timestamped .bak copy is made first, and the write is verified by comparing ' +
-        'checksums afterwards - the result includes the backup path and the checksum ' +
-        'verdict. Use for Entware service configs; router configuration itself goes ' +
+        'Writes a file over SSH, restricted to /opt/ and /tmp/. The new content is written ' +
+        'beside the target and checksum-verified before it replaces it, so a failed write ' +
+        'leaves the existing file untouched. If the file exists, a timestamped .bak copy is ' +
+        'kept and its path returned. Use for Entware service configs; router configuration itself goes ' +
         'through the set_* tools, not files.',
       inputSchema: {
         path: z.string().describe('Absolute path under /opt/ or /tmp/.'),
@@ -128,21 +165,31 @@ export function registerSshTools(server: McpServer, ctx: ToolContext): void {
 
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const backupPath = `${path}.bak-${stamp}`;
-      const encoded = Buffer.from(content, 'utf8').toString('base64');
+      const tempPath = `${path}.tmp-${stamp}`;
       const expectedMd5 = md5(content);
 
-      const write = await ssh.exec(
-        `if [ -f '${path}' ]; then cp -p '${path}' '${backupPath}'; echo BACKED_UP; fi && ` +
-          `echo '${encoded}' | base64 -d > '${path}' && md5sum '${path}' | cut -d' ' -f1`,
-        DEFAULT_TIMEOUT_MS
-      );
-      if (write.code !== 0) {
+      const script = buildWriteScript(path, tempPath, backupPath, expectedMd5);
+
+      const write = await ssh.exec(script, DEFAULT_TIMEOUT_MS, { stdin: content });
+      const actualMd5 = write.stdout.trim().split('\n').pop() ?? '';
+
+      if (write.code === 3) {
         return fail(
-          new Error(`Write to '${path}' failed (exit ${String(write.code)}): ${write.stderr.trim()}`)
+          new Error(
+            `The copy of '${path}' that reached the router does not match what was sent ` +
+              `(checksum does not match: expected ${expectedMd5}, got ${actualMd5}). ` +
+              'Nothing was changed: the existing file is untouched.'
+          )
         );
       }
-
-      const actualMd5 = write.stdout.trim().split('\n').pop() ?? '';
+      if (write.code !== 0) {
+        return fail(
+          new Error(
+            `Write to '${path}' failed (exit ${String(write.code)}): ${write.stderr.trim()} ` +
+              'The existing file was not replaced.'
+          )
+        );
+      }
       if (actualMd5 !== expectedMd5) {
         return fail(
           new Error(
@@ -210,7 +257,7 @@ async function keeneticSshPort(ctx: ToolContext): Promise<number | null> {
   try {
     const raw = (await ctx.client.rci.get('show/rc/ip/ssh')) as Record<string, unknown> | null;
     const port = Number(raw?.['port'] ?? 22);
-    return Number.isInteger(port) ? port : null;
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
   } catch {
     return null;
   }

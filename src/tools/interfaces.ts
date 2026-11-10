@@ -1,8 +1,18 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import { capList } from '../shape/budget.js';
+import { asEntries, asRecord, str, type Row } from '../shape/coerce.js';
 import { projectInterface } from '../shape/project.js';
-import { fail, guard, ok, READ_ONLY, type ToolContext, type ToolResult } from './registry.js';
+import {
+  fail,
+  guard,
+  listResult,
+  ok,
+  READ_ONLY,
+  WRITE,
+  type ToolContext,
+  type ToolResult
+} from './registry.js';
+import { RciError } from '../router/errors.js';
 import { describeWrite, verifiedWrite } from './write.js';
 
 type InterfaceKind = 'all' | 'wan' | 'lan' | 'wifi' | 'vpn' | 'bridge';
@@ -16,41 +26,32 @@ type InterfaceKind = 'all' | 'wan' | 'lan' | 'wifi' | 'vpn' | 'bridge';
  * interfaces list_interfaces reports under kind=wifi.
  */
 async function readInterface(ctx: ToolContext, name: string): Promise<Record<string, unknown>> {
-  const raw = await ctx.client.rci.post({ show: { interface: { name } } });
-  const outer = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const show = typeof outer['show'] === 'object' && outer['show'] !== null
-    ? (outer['show'] as Record<string, unknown>)
-    : {};
-  const record = show['interface'];
-  return typeof record === 'object' && record !== null ? (record as Record<string, unknown>) : {};
+  const raw = asRecord(await ctx.client.rci.post({ show: { interface: { name } } }));
+  return asRecord(asRecord(raw['show'])['interface']);
 }
 
 const VPN_TYPES = new Set(['Wireguard', 'OpenVPN', 'L2TP', 'PPTP', 'IPsec', 'Sstp']);
 
 /** Connection policies that route through `name`, by policy name and description. */
 async function policiesUsing(ctx: ToolContext, name: string): Promise<Array<{ policy: string; description: string }>> {
-  const raw = await ctx.client.rci.get('ip/policy');
-  const tree = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const tree = asRecord(await ctx.client.rci.get('ip/policy'));
   const out: Array<{ policy: string; description: string }> = [];
   for (const [policy, value] of Object.entries(tree)) {
-    const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-    const permits = Array.isArray(record['permit']) ? record['permit'] : record['permit'] ? [record['permit']] : [];
-    const uses = permits.some(
-      entry => typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>)['interface'] === name
-    );
-    if (uses) {
-      out.push({ policy, description: typeof record['description'] === 'string' ? record['description'] : '' });
+    const record = asRecord(value);
+    if (asEntries(record['permit']).some(entry => entry['interface'] === name)) {
+      out.push({ policy, description: str(record, 'description') });
     }
   }
   return out;
 }
 
 function isNotFound(error: unknown): boolean {
+  if (error instanceof RciError && error.code === '404') return true;
   return /404|does not exist|not found|unable to find/i.test((error as Error)?.message ?? '');
 }
 
-function matchesKind(id: string, record: Record<string, unknown>, kind: InterfaceKind): boolean {
-  const type = typeof record['type'] === 'string' ? record['type'] : '';
+function matchesKind(id: string, record: Row, kind: InterfaceKind): boolean {
+  const type = str(record, 'type');
   switch (kind) {
     case 'wan':
       if (type === 'Port') return !String(record['id'] ?? '').startsWith('GigabitEthernet0/');
@@ -93,29 +94,17 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
       annotations: READ_ONLY
     },
     guard(async ({ kind, detail, limit }) => {
-      const raw = await ctx.client.rci.get('show/interface');
-      const all = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-
+      const all = asRecord(await ctx.client.rci.get('show/interface'));
       const selected = Object.entries(all).filter(([id, record]) =>
-        matchesKind(
-          id,
-          typeof record === 'object' && record !== null ? (record as Record<string, unknown>) : {},
-          kind ?? 'all'
-        )
+        matchesKind(id, asRecord(record), kind ?? 'all')
       );
 
       const shaped =
         detail === 'full'
-          ? selected.map(([id, record]) => ({ id, ...(record as Record<string, unknown>) }))
+          ? selected.map(([id, record]) => ({ id, ...asRecord(record) }))
           : selected.map(([id, record]) => projectInterface(id, record));
 
-      const capped = capList(shaped, limit ?? 100, ctx.maxResponseBytes);
-      return ok({
-        interfaces: capped.items,
-        shown: capped.shown,
-        total: capped.total,
-        ...(capped.note ? { note: capped.note } : {})
-      });
+      return listResult('interfaces', shaped, limit ?? 100, ctx.maxResponseBytes);
     })
   );
 
@@ -133,7 +122,7 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
     },
     guard(async ({ name }): Promise<ToolResult> => {
       try {
-        return ok(await readInterface(ctx, name));
+        return ok(await readInterface(ctx, name), ctx.maxResponseBytes);
       } catch (error) {
         return fail(
           new Error(
@@ -160,7 +149,7 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
         name: z.string().describe('Interface id from list_interfaces.'),
         state: z.enum(['up', 'down']).describe('Desired administrative state.')
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+      annotations: WRITE
     },
     guard(async ({ name, state }): Promise<ToolResult> => {
       const snapshot = await ctx.backup.ensure();
@@ -193,10 +182,10 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
       inputSchema: {
         name: z.string().describe('Interface id from list_interfaces, for example Wireguard0.')
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+      annotations: WRITE
     },
     guard(async ({ name }): Promise<ToolResult> => {
-      let record: Record<string, unknown>;
+      let record: Row;
       try {
         record = await readInterface(ctx, name);
       } catch (error) {
@@ -205,7 +194,7 @@ export function registerInterfaceTools(server: McpServer, ctx: ToolContext): voi
         }
         throw error;
       }
-      const type = typeof record['type'] === 'string' ? record['type'] : '';
+      const type = str(record, 'type');
       if (!VPN_TYPES.has(type)) {
         return fail(
           new Error(
